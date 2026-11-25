@@ -81,6 +81,8 @@ Post findings directly via `mcp__MCP_DOCKER__add_issue_comment` (use the PR numb
 {any issues found, using severity format below}
 ```
 
+The report may end with one optional `Follow-ups:` block, for things worth doing later that are not findings: a line exactly `Follow-ups:`, then `- <item>` lines. Omit it when there is nothing. The orchestrator adds each item to the backlog as untriaged.
+
 For individual findings:
 ```
 **QA Finding**
@@ -115,6 +117,6 @@ When all acceptance criteria pass and no critical/major findings remain:
 
 This agent runs in the main checkout, not an isolated worktree: it verifies OTHER agents' worktrees by path, and an isolated tester cannot run `git status`/`git diff` against a sibling worktree.
 
-**Report in your final message:** the PO reads your final message, nothing else — no progress channel exists. Put the whole result there. If `hooks/agent-budget-warn.sh` warns that you are near the tool-call budget, stop exploring, wrap up, and report what you have plus what is left.
+**Report in your final message:** the PO reads your final message, nothing else — no progress channel exists. Put the whole result there. If `cct-guards` is installed and its `agent-budget-warn` warns that you are near the tool-call budget, stop exploring, wrap up, and report what you have plus what is left.
 
 **Scope abort:** if the task grows past its stated scope — extra files, a second root cause, a redesign — stop, report what is done plus the blocker, and let the PO re-tier. Do not expand scope inside one spawn. A long run is not evidence of progress.

@@ -46,7 +46,7 @@ the code MUST be rewritten until it complies.
 
 # Agent Routing and Build/Test Notes (moved from CLAUDE.md)
 
-**Agent fallback:** The `java-coder` agent uses Bash `mvn`/`gradle` for build and test (no Java-specific MCP tools exist yet). Do NOT substitute `coder` for `java-coder` — it carries Java/Spring-specific knowledge beyond build tool usage.
+**Agent fallback:** The `java-tools:java-coder` agent uses Bash `mvn`/`gradle` for build and test (no Java-specific MCP tools exist yet). `cct:coder` is the default; use `java-tools:java-coder` if `java-tools` is installed — it carries Java/Spring-specific knowledge beyond build tool usage.
 
 **Build & Test:** use the project's Maven/Gradle build+test commands (see `PROJECT_CONTEXT.md`); for slow suites, target first (Maven `mvn test -pl module -Dtest=ClassName` / Gradle `./gradlew :module:test --tests ClassName`) then run the full suite.
 

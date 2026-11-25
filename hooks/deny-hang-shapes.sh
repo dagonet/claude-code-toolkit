@@ -106,6 +106,61 @@ esac
 # ONE compound command (for/while/until..done, if..fi, case..esac, { }, ( )) is a
 # single command however many `;` it holds. The awk tracks compound nesting: a
 # segment that starts while a compound is still open belongs to it.
+# Self-review item 1 (user decision #47, "safe middle way"): a cd into the session
+# cwd (or below it) followed only by read-only commands is let through -- Claude Code
+# documents a compound command as prompt-free when every part qualifies, and a cd
+# inside the working directory qualifies. Anything else, and any doubt, keeps the refusal.
+# dh_safe_cd_chain <command> <cwd>: 0 only for that exact subset, 1 otherwise.
+dh_safe_cd_chain() {
+  local raw=$1 cwd=$2 target rest seg w LC_ALL=C
+  # The cd target is one plain absolute word. Everything after the cd must be a
+  # whitelist: letters, digits, space, tab and  - . / _ , : = + @ % | ; &  once
+  # every single-quoted string is collapsed to Q (a quoted string may hold anything
+  # but may not start with `-`). Double quotes, `$`, backtick, backslash, braces,
+  # brackets, globs, `~`, redirects, `(`, `!`, `#` and newlines are all refused.
+  local re_cd=$'^cd[[:space:]]+(/[A-Za-z0-9._/,:=+@%-]*)(.*)$'
+  local re_ok=$'^[A-Za-z0-9 \t._/,:=+@%|;&-]*$'
+  # a bare range is digits only: `$` is allowed single-quoted ('$p', 'N,$p'), never bare
+  local re_bare='([0-9]+|[0-9]+,[0-9]+)' re_rng='([0-9]+|\$|[0-9]+,[0-9]+|[0-9]+,\$)'
+  local re_find='(^|[[:space:]])-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)([[:space:]]|$)'
+  local re_glue='Q[^[:space:]]|[^[:space:]]Q' re_follow='(^|[[:space:]])-[a-zA-Z0-9]*[fF]'
+  while [ "${cwd%/}" != "$cwd" ]; do cwd=${cwd%/}; done
+  [ -n "$cwd" ] || return 1
+  # A heredoc body is a newline; a quote directly before `-` may hide an option word.
+  case "$raw" in *$'\n'*|*'||'*|*"'-"*) return 1 ;; esac
+  [[ $raw =~ $re_cd ]] || return 1
+  target=${BASH_REMATCH[1]} rest=${BASH_REMATCH[2]}
+  case "$target/" in */../*) return 1 ;; esac
+  while [ "${target%/}" != "$target" ]; do target=${target%/}; done
+  [ "$target" = "$cwd" ] || case $target in "$cwd"/*) ;; *) return 1 ;; esac
+  rest=${rest#"${rest%%[![:space:]]*}"}
+  case $rest in '&&'*|';'*) ;; *) return 1 ;; esac
+  # `sed -n '<range>p'` becomes the word SEDN; any other sed is then off the list.
+  # A literal Q becomes q first (classification only), so the marker Q is unambiguous.
+  rest=$(printf '%s' "$rest" | tr Q q | sed -E \
+    "s/(^|[;&|[:space:]])sed[[:space:]]+-n[[:space:]]+(${re_bare}p|${DH_Q}${re_rng}p${DH_Q})([[:space:];&|]|\$)/\\1SEDN \\5/g; s/${DH_Q}[^${DH_Q}]*${DH_Q}/Q/g")
+  [[ $rest =~ $re_ok ]] || return 1
+  rest=${rest//&&/;}
+  case "$rest" in *'&'*) return 1 ;; esac
+  rest=${rest//|/;}
+  while IFS= read -r seg; do
+    seg=${seg#"${seg%%[![:space:]]*}"}; seg=${seg%"${seg##*[![:space:]]}"}
+    [ -n "$seg" ] || continue
+    [[ $seg =~ $re_glue ]] && return 1
+    w=${seg%%[[:space:]]*}
+    case $w in
+      grep|egrep|fgrep|wc|ls|cat|head) ;;
+      rg) [[ $seg == *--pre* || $seg == *--hostname-bin* ]] && return 1 ;;
+      tail) [[ $seg == *--f* ]] && return 1   # --follow and every GNU prefix of it (--f, --fo, ...); tail has no other --f option
+            [[ $seg =~ $re_follow ]] && return 1 ;;
+      SEDN) [[ $seg =~ [[:space:]]- ]] && return 1 ;;
+      find) [[ $seg =~ $re_find ]] && return 1 ;;
+      *) return 1 ;;
+    esac
+  done <<<"${rest//;/$'\n'}"
+  return 0
+}
+
 DH_TRIM="${DH_HEAD#"${DH_HEAD%%[![:space:]]*}"}"
 case "$DH_TRIM" in
   cd[[:space:]]*)
@@ -144,7 +199,7 @@ case "$DH_TRIM" in
           }
         }
         END { print n + 0 }')
-    if [ "${DH_N:-0}" -ge 3 ]; then
+    if [ "${DH_N:-0}" -ge 3 ] && ! dh_safe_cd_chain "${DH_CMD#"${DH_CMD%%[![:space:]]*}"}" "$DH_CWD"; then
       dh_refuse "use absolute paths or git -C <dir>, or put the steps in a script file and run bash <path>, instead of a leading cd before several commands."
     fi
     ;;

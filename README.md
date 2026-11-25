@@ -17,7 +17,7 @@ Claude hands work to specialists instead of doing everything itself. Call them a
 | Agent | What it does |
 |---|---|
 | `cct:coder` | Implements a change in its own git worktree, so your working copy stays clean |
-| `cct:dotnet-coder`, `cct:java-coder`, `cct:python-coder`, `cct:rust-coder` | The same, with the habits of that language |
+| `dotnet-tools:dotnet-coder`, `java-tools:java-coder`, `python-tools:python-coder`, `rust-tools:rust-coder` | The same, with the habits of that language. Each comes with its language plugin, if that plugin is installed |
 | `cct:tester` | Checks a feature against its acceptance criteria with tests and logs |
 | `cct:code-reviewer` | Reviews code and posts sorted findings. Never edits |
 | `cct:architect` | Reviews design and keeps the architecture notes. Never writes application code |
@@ -49,15 +49,15 @@ Select it with `"outputStyle": "cct:pm-report"` in `~/.claude/settings.json`. `/
 
 | Skill | What it does |
 |---|---|
-| `/cct:commit` | Shows you exactly what will be committed, then commits |
+| `/cct-helpers:commit` | If `cct-helpers` is installed: shows you exactly what will be committed, then commits |
 | `/cct:sprint` | Runs a backlog as parallel agent workstreams, with a rebase and the gate before each merge |
 | `/cct:challenge` | Questions a plan in two passes (is it needed, is it right) before you run it |
 | `/cct:sync-template` | Pulls template updates into your project and keeps your own edits |
-| `/cct:contribute-upstream` | Sends an improvement from your project back to the toolkit templates |
-| `/cct:retro-review` | Reviews agent failures, config drift and which projects are behind |
-| `/cct:jev` | Switches the optional model routing on or off (below) |
+| `/cct-helpers:contribute-upstream` | If `cct-helpers` is installed: sends an improvement from your project back to the toolkit templates |
+| `/cct-learning:retro-review` | If `cct-learning` is installed: reviews agent failures, config drift and which projects are behind |
+| `/cct-jev:jev` | If `cct-jev` is installed: switches the optional model routing on or off (below) |
 
-Two more start by themselves when they fit: `cct:mcp-usage` (steps for large inputs and MCP servers) and `cct:karpathy-guidelines` (habits that avoid common coding mistakes).
+If `cct-helpers` is installed, two more start by themselves when they fit: `cct-helpers:mcp-usage` (steps for large inputs and MCP servers) and `cct-helpers:karpathy-guidelines` (habits that avoid common coding mistakes).
 
 ### Project templates
 
@@ -66,19 +66,19 @@ Compared in [`docs/templates.md`](docs/templates.md).
 
 ### Optional: model routing with Jev
 
-Off by default. `/cct:jev on` lets the Jev service pick the model and effort for each agent launch.
-It is switched on per clone and needs a TypeSafe API key; the `cct:jev` skill explains what is sent.
+Off by default, and it ships in the optional `cct-jev` plugin (`claude plugin install cct-jev@dagonet`). With the plugin installed, `/cct-jev:jev on` lets the Jev service pick the model and effort for each agent launch.
+It is switched on per clone and needs a TypeSafe API key; the `cct-jev:jev` skill explains what is sent. The core model floor steps aside only while the plugin is loaded in the session.
 
 ## Install
 
 First, `git`, Claude Code and a JSON reader for the hooks: `node`, `python3` or `jq`.
 Without any of the three, every shell command and file read is refused, in every repo.
-Without `node`, six hooks do nothing: delegation, read-size capping, the Bash-output guard, the agent-report check, the RETRO ledger and brief (see [`docs/getting-started.md`](docs/getting-started.md)).
+Without `node`, six hooks do nothing: delegation, read-size capping and the Bash-output guard (if `cct-guards` is installed), the agent-report check, the RETRO ledger and brief (if `cct-learning` is installed; see [`docs/getting-started.md`](docs/getting-started.md)).
 
 In Claude Code, once per machine (the same on Windows, macOS and Linux), then restart the session:
 
 ```
-/plugin marketplace add dagonet/claude-code-toolkit#v6.2.0
+/plugin marketplace add dagonet/claude-code-toolkit#v7.0.0
 /plugin install cct@dagonet
 ```
 
@@ -86,10 +86,10 @@ Optional: copy [`user-level-reference/CLAUDE.md`](user-level-reference/CLAUDE.md
 Its Platform section assumes Windows with Git Bash, so adapt it on macOS and Linux (the Linux installer below does).
 Its `settings.json` needs merging, not copying: see [`user-level-reference/README.md`](user-level-reference/README.md).
 
-- **Linux:** `bash scripts/install-user-level-linux.sh` from a checkout sets up the user-level files and migrates a v4.x setup.
+- **Linux:** `bash scripts/install-user-level-linux.sh` from a checkout sets up the user-level files and migrates a v4.x setup. Add `--with cct-guards,cct-learning,cct-helpers` to install optional plugins (below) in the same run.
 - **Upgrading from v4.x on a Windows PC?** See [`docs/plugin-migration-windows.md`](docs/plugin-migration-windows.md).
 - **Cloud sessions** (claude.ai/code, routines) load no local plugins. Add this to the environment's setup script:
-  `claude plugin marketplace add dagonet/claude-code-toolkit#v6.2.0 && claude plugin install cct@dagonet`
+  `claude plugin marketplace add dagonet/claude-code-toolkit#v7.0.0 && claude plugin install cct@dagonet`
   To add MCP server plugins (next section), install `uv` first and append `&& claude plugin install <name>@dagonet` for each. `uv` is present in cloud sessions, and PyPI and GitHub are reachable from them.
 - **Moving to a new release:** a pinned install does not advance by itself: `claude plugin marketplace update` and `claude plugin update cct@dagonet` leave it where it is.
   Run `claude plugin marketplace remove dagonet` (this uninstalls `cct` too), add the new `#tag` the same way, run `claude plugin install cct@dagonet`
@@ -98,6 +98,20 @@ Its `settings.json` needs merging, not copying: see [`user-level-reference/READM
 - A project set up from the templates refuses every tool call while the plugin is off in the session. Only the `/plugin` commands still work.
 
 The CHANGELOG has the migration notes for every release, on Linux and Windows alike.
+
+## Optional plugins
+
+Since v7.0.0 the `cct` plugin is the core. The parts that not every machine needs are separate plugins in the same marketplace, and nothing optional is installed by default:
+
+| Install | What it adds |
+|---|---|
+| `claude plugin install cct-guards@dagonet` | Caps oversized file reads and long command output, warns on runaway agents, runs the project's post-edit build |
+| `claude plugin install cct-learning@dagonet` | Records agent failures and shows them at session start; the `/cct-learning:retro-review` skill |
+| `claude plugin install cct-helpers@dagonet` | The `/cct-helpers:commit` and `/cct-helpers:contribute-upstream` skills, plus `karpathy-guidelines` and `mcp-usage` |
+| `claude plugin install cct-jev@dagonet` | Jev model routing (above); sends spawn text to an outside service |
+| `claude plugin install <dotnet\|python\|rust\|java>-tools@dagonet` | The coder agent for that language (the first three also start their MCP server, below) |
+
+A plain `claude plugin update cct@dagonet` does not install any of them, and v7.0.0 took these parts out of `cct`: install each one you use by name. The old-to-new name map is in the CHANGELOG's v7.0.0 section.
 
 ## MCP server plugins
 

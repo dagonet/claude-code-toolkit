@@ -8,7 +8,7 @@ name="${1:-}"
 here="$(cd "$(dirname "$0")" && pwd)" || exit 2
 # The class/polarity table and the step-aside decision live in lib/hook-class.sh (shared with the v6 dispatcher).
 lib="$here/lib/hook-class.sh"
-[ -r "$lib" ] || { echo "HOOK BLOCKED: run-hook.sh: hooks/lib/hook-class.sh missing -- reinstall the cct plugin" >&2; exit 2; }
+[ -r "$lib" ] || { echo "HOOK BLOCKED: run-hook.sh: hooks/lib/hook-class.sh missing -- reinstall the plugin that registers this hook" >&2; exit 2; }
 . "$lib"
 hc_class "$name" || { echo "HOOK BLOCKED: run-hook.sh: unknown hook name '$name' -- the plugin's hooks.json and run-hook.sh disagree" >&2; exit 2; }
 pol=$HC_POL
@@ -19,8 +19,8 @@ hc_skip "$name" "$proj" "$s" "$u" && exit 0
 f="$here/$name.sh"
 if [ ! -r "$f" ]; then
   case $pol in
-    closed) echo "HOOK SCRIPT MISSING: $f -- enforcement offline. Reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet)." >&2; exit 2 ;;
-    warn)   echo "WARN: $f missing -- $name offline. Reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet)." >&2; exit 0 ;;
+    closed) echo "HOOK SCRIPT MISSING: $f -- enforcement offline. Reinstall the plugin that registers this hook (claude plugin uninstall it, then claude plugin install it again)." >&2; exit 2 ;;
+    warn)   echo "WARN: $f missing -- $name offline. Reinstall the plugin that registers this hook (claude plugin uninstall it, then claude plugin install it again)." >&2; exit 0 ;;
     *)      exit 0 ;;
   esac
 fi

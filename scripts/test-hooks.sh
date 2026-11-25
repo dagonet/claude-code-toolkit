@@ -251,7 +251,7 @@ trow_tool() { # -> an assistant tool_use-only row
 
 # --- assertion --------------------------------------------------------------
 
-# v6.0: a row on one of the six dispatched guards asserts a second time, through the dispatcher's runner, under
+# v6.0: a row on one of the seven dispatched guards asserts a second time, through the dispatcher's runner, under
 # "<label> [dispatch]". It uses cctd_source_guard, not cctd_run_guard: the direct rows have no class gate and no
 # step-aside, so the replay has none either (the selection is covered by the v6 dispatch rows). Copies under
 # $TMPROOT and the other hooks are not replayed. The replay runs FIRST and the direct run LAST: both write the same
@@ -259,7 +259,7 @@ trow_tool() { # -> an assistant tool_use-only row
 hk_modes() { # <hook_abs_path> -> HK_MODES ("direct", or "dispatch direct") and HK_G (the guard's name)
   HK_MODES=direct; HK_G=${1##*/}; HK_G=${HK_G%.sh}
   case "$1" in
-    "$ROOT"/hooks/no-push-main.sh|"$ROOT"/hooks/deny-secret-reads.sh|"$ROOT"/hooks/gate-before-merge.sh|"$ROOT"/hooks/pre-commit-test.sh|"$ROOT"/hooks/deny-hang-shapes.sh|"$ROOT"/hooks/enforce-delegation.sh) HK_MODES="dispatch direct" ;;
+    "$ROOT"/hooks/no-push-main.sh|"$ROOT"/hooks/deny-secret-reads.sh|"$ROOT"/hooks/gate-before-merge.sh|"$ROOT"/hooks/pre-commit-test.sh|"$ROOT"/hooks/deny-hang-shapes.sh|"$ROOT"/hooks/enforce-delegation.sh|"$ROOT"/hooks/backlog-item-check.sh) HK_MODES="dispatch direct" ;;
   esac
 }
 hk_exec() { # <mode> <hook_abs_path> <json> -- payload on stdin; the caller's redirections and TMPDIR apply
@@ -4433,7 +4433,7 @@ check "Bash commit still runs tests"      hooks/pre-commit-test.sh 2 \
 # ===========================================================================
 echo
 echo "=== hooks/read-size-gate.sh (Read cap via updatedInput) ==="
-H=hooks/read-size-gate.sh
+H=plugins/cct-guards/hooks/read-size-gate.sh
 readout() { # <json> -> the hook's stdout
   printf '%s' "$1" | bash "$ROOT/$H" 2>/dev/null
 }
@@ -4515,7 +4515,7 @@ fi
 # --- the ctx-tool advice the blocking version printed is gone for good.
 # A source grep, so it holds with or without node.
 expect "no context-mode advice in the hook" 0 \
-  "$(grep -c 'ctx_execute_file' "$ROOT/hooks/read-size-gate.sh")"
+  "$(grep -c 'ctx_execute_file' "$ROOT/plugins/cct-guards/hooks/read-size-gate.sh")"
 
 # ===========================================================================
 # bash-output-guard.sh (PostToolUse on Bash|PowerShell) — v2.0 PR3.
@@ -4526,7 +4526,7 @@ expect "no context-mode advice in the hook" 0 \
 # ===========================================================================
 echo
 echo "=== hooks/bash-output-guard.sh (PostToolUse output cap) ==="
-GUARD=hooks/bash-output-guard.sh
+GUARD=plugins/cct-guards/hooks/bash-output-guard.sh
 GUARDTMP="$TMPROOT/guardtmp"
 mkdir -p "$GUARDTMP"
 
@@ -4635,7 +4635,7 @@ fi
 # ===========================================================================
 echo
 echo "=== hooks/post-edit-build.sh (PostToolUse Edit|Write) ==="
-PEB=hooks/post-edit-build.sh
+PEB=plugins/cct-guards/hooks/post-edit-build.sh
 PEBDIR="$TMPROOT/pebdir"
 mkdir -p "$PEBDIR"
 
@@ -4729,7 +4729,7 @@ mkdir -p "$RETROHOME"
 TRANSCRIPT="$TMPROOT/agent-fixture.jsonl"
 mktranscript "$TRANSCRIPT"
 mkstop "$PROJCWD" coder agent-abc123 "$TRANSCRIPT" \
-  | HOME="$RETROHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$RETROHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "retro-ledger exits 0" 0 $?
 expect "ledger writes to the slug path" 1 "$( [ -f "$SLUGDIR/retro.md" ] && echo 1 || echo 0 )"
 expect "ledger appends exactly one line" 1 "$(wc -l < "$SLUGDIR/retro.md" 2>/dev/null | tr -d ' ')"
@@ -4746,7 +4746,7 @@ expect "ledger records agent type + id" 1 \
 CLEANHOME="$TMPROOT/retrohome-clean"
 mkdir -p "$CLEANHOME"
 mkstop "$PROJCWD" tester agent-none "$TMPROOT/does-not-exist.jsonl" \
-  | HOME="$CLEANHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$CLEANHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "missing transcript exits 0" 0 $?
 expect "missing transcript writes nothing" 0 \
   "$(find "$CLEANHOME" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
@@ -4755,13 +4755,13 @@ expect "missing transcript writes nothing" 0 \
 printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"all good"}]}}' \
   > "$TMPROOT/agent-clean.jsonl"
 mkstop "$PROJCWD" coder agent-clean "$TMPROOT/agent-clean.jsonl" \
-  | HOME="$CLEANHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$CLEANHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "clean transcript exits 0" 0 $?
 expect "clean transcript writes nothing" 0 \
   "$(find "$CLEANHOME" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
 
 # --- 4. malformed stdin must never break a SubagentStop
-printf '%s' '{not json' | HOME="$CLEANHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+printf '%s' '{not json' | HOME="$CLEANHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "malformed payload exits 0" 0 $?
 
 # --- 5. the slug rule is Claude Code's auto-memory rule, measured against
@@ -4770,7 +4770,7 @@ expect "malformed payload exits 0" 0 $?
 BSHOME="$TMPROOT/retrohome-bs"
 mkdir -p "$BSHOME"
 mkstop 'G:\git\retroproj' coder agent-bs "$TRANSCRIPT" \
-  | HOME="$BSHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$BSHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "backslash cwd slugs identically" 1 \
   "$( [ -f "$BSHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
 
@@ -4781,7 +4781,7 @@ mkdir -p "$BRIEFDIR"
 : > "$BRIEFDIR/retro.md"
 i=1; while [ "$i" -le 12 ]; do echo "entry-$i" >> "$BRIEFDIR/retro.md"; i=$((i + 1)); done
 BRIEFOUT="$TMPROOT/brief.out"
-mkstart "$PROJCWD" | HOME="$BRIEFHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
+mkstart "$PROJCWD" | HOME="$BRIEFHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
 expect "retro-brief exits 0" 0 $?
 expect "brief prints the RETRO header" 1 "$(grep -c '^RETRO ' "$BRIEFOUT")"
 expect "brief prints 10 entries" 10 "$(grep -c '^entry-' "$BRIEFOUT")"
@@ -4789,7 +4789,7 @@ expect "brief starts at entry-3" 1 "$(grep -c '^entry-3$' "$BRIEFOUT")"
 expect "brief drops entry-2" 0 "$(grep -c '^entry-2$' "$BRIEFOUT")"
 
 # --- 7. no ledger for this project: the brief is silent and still exits 0
-mkstart 'G:/git/no-such-project' | HOME="$BRIEFHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
+mkstart 'G:/git/no-such-project' | HOME="$BRIEFHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
 expect "brief with no ledger exits 0" 0 $?
 expect "brief with no ledger prints nothing" 0 "$(wc -c < "$BRIEFOUT" | tr -d ' ')"
 
@@ -4806,7 +4806,7 @@ FP_QUOTED="1: echo 'BLOCKED: use the MCP tool'
 FPHOME="$TMPROOT/retrohome-fp"
 mkdir -p "$FPHOME"
 mkstop "$PROJCWD" coder agent-fp "$TMPROOT/agent-falsepos.jsonl" \
-  | HOME="$FPHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$FPHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "successful output is not a failure" 0 \
   "$(find "$FPHOME" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
 
@@ -4819,7 +4819,7 @@ expect "successful output is not a failure" 0 \
 BKHOME="$TMPROOT/retrohome-block"
 mkdir -p "$BKHOME"
 mkstop "$PROJCWD" coder agent-bk "$TMPROOT/agent-block.jsonl" \
-  | HOME="$BKHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$BKHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 BKLEDGER="$BKHOME/.claude/projects/G--git-retroproj/memory/retro.md"
 expect "hook block counts without is_error" 1 \
   "$(grep -c 'errors=2' "$BKLEDGER" 2>/dev/null)"
@@ -4836,7 +4836,7 @@ expect "block name comes from the hook command" 1 \
 BUHOME="$TMPROOT/retrohome-budget"
 mkdir -p "$BUHOME"
 mkstop "$PROJCWD" coder agent-bu "$TMPROOT/agent-budget.jsonl" \
-  | HOME="$BUHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$BUHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 BULEDGER="$BUHOME/.claude/projects/G--git-retroproj/memory/retro.md"
 expect "budget block tallies as budget=1" 1 \
   "$(grep -c 'budget=1' "$BULEDGER" 2>/dev/null)"
@@ -4864,15 +4864,15 @@ mkdir -p "$BOHOME"
   trow_ok "PreToolUse:Bash hook error: [bash 'hooks/agent-budget-warn.sh']: BUDGET: this spawn has made 240 tool calls (median is 15; 120 is the first ceiling)."
 } > "$TMPROOT/agent-budgetonly.jsonl"
 mkstop "$PROJCWD" coder agent-bo77 "$TMPROOT/agent-budgetonly.jsonl" \
-  | HOME="$BOHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$BOHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 BOLEDGER="$BOHOME/.claude/projects/G--git-retroproj/memory/retro.md"
 expect "budget-only spawn STILL writes a ledger row" 1 \
   "$(grep -c 'agent-bo77' "$BOLEDGER" 2>/dev/null)"
 expect "budget-only row is budget=2 | errors=0" 1 \
   "$(grep -c 'budget=2 | errors=0' "$BOLEDGER" 2>/dev/null)"
 mkstop "$PROJCWD" tester agent-real77 "$TMPROOT/agent-block.jsonl" \
-  | HOME="$BOHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
-mkstart "$PROJCWD" | HOME="$BOHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/bo.out" 2>/dev/null
+  | HOME="$BOHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
+mkstart "$PROJCWD" | HOME="$BOHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$TMPROOT/bo.out" 2>/dev/null
 expect "brief over a filtered ledger exits 0" 0 $?
 expect "brief HIDES the budget-only agent" 0 "$(grep -c 'agent-bo77' "$TMPROOT/bo.out")"
 expect "brief SHOWS the real-failure agent" 1 "$(grep -c 'agent-real77' "$TMPROOT/bo.out")"
@@ -4887,7 +4887,7 @@ DEADDIR="$DEADHOME/.claude/projects/G--git-retroproj/memory"
 mkdir -p "$DEADDIR"
 printf '%s\n' '2026-09-02 10:00 | coder | agent-dead77 | dead=[Bash,Edit] | blocks=[] | budget=4 | errors=0' \
   > "$DEADDIR/retro.md"
-mkstart "$PROJCWD" | HOME="$DEADHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/dead.out" 2>/dev/null
+mkstart "$PROJCWD" | HOME="$DEADHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$TMPROOT/dead.out" 2>/dev/null
 expect "a dead= row survives the brief filter even with budget>0, errors=0" 1 \
   "$(grep -c 'agent-dead77' "$TMPROOT/dead.out")"
 
@@ -4906,7 +4906,7 @@ while [ "$dd_i" -le 11 ]; do
     "$dd_i" >> "$DDDIR/retro.md"
   dd_i=$((dd_i + 1))
 done
-mkstart "$PROJCWD" | HOME="$DDHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/dd.out" 2>/dev/null
+mkstart "$PROJCWD" | HOME="$DDHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$TMPROOT/dd.out" 2>/dev/null
 expect "brief keeps exactly one row per agent id" 1 "$(grep -c 'agent-loud77' "$TMPROOT/dd.out")"
 expect "brief keeps that agent's LAST row" 1 "$(grep -c 'errors=11' "$TMPROOT/dd.out")"
 expect "dedupe stops one agent hiding another" 1 "$(grep -c 'agent-quiet77' "$TMPROOT/dd.out")"
@@ -4923,7 +4923,7 @@ expect "dedupe stops one agent hiding another" 1 "$(grep -c 'agent-quiet77' "$TM
 MANYHOME="$TMPROOT/retrohome-many"
 mkdir -p "$MANYHOME"
 mkstop "$PROJCWD" coder agent-many "$TMPROOT/agent-many.jsonl" \
-  | HOME="$MANYHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+  | HOME="$MANYHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 MANYLEDGER="$MANYHOME/.claude/projects/G--git-retroproj/memory/retro.md"
 expect "dead list is capped at 5 names" 1 \
   "$(grep -c 'dead=\[mcp__t01__x,mcp__t02__x,mcp__t03__x,mcp__t04__x,mcp__t05__x,+7 more\]' "$MANYLEDGER" 2>/dev/null)"
@@ -4936,7 +4936,7 @@ LONGHOME="$TMPROOT/retrohome-long"
 LONGDIR="$LONGHOME/.claude/projects/G--git-retroproj/memory"
 mkdir -p "$LONGDIR"
 { nchars 500 X; echo; } > "$LONGDIR/retro.md"
-mkstart "$PROJCWD" | HOME="$LONGHOME" bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/long.out" 2>/dev/null
+mkstart "$PROJCWD" | HOME="$LONGHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$TMPROOT/long.out" 2>/dev/null
 expect "brief truncates a 500-char entry" 1 \
   "$( [ "$(awk 'NR==2{print length($0)}' "$TMPROOT/long.out")" -le 200 ] && echo 1 || echo 0 )"
 
@@ -4950,7 +4950,7 @@ rm -rf "$POSIXHOME"
 if mkdir -p "$POSIXHOME" 2>/dev/null; then
   rm -rf "$POSIXHOME"
   mkstop "$PROJCWD" coder agent-posix "$TRANSCRIPT" \
-    | HOME="$POSIXHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+    | HOME="$POSIXHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
   expect "POSIX-style HOME resolves correctly" 1 \
     "$( [ -f "$POSIXHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
   rm -rf "$POSIXHOME"
@@ -4964,11 +4964,11 @@ OVERHOME="$TMPROOT/retrohome-override"
 mkdir -p "$OVERHOME"
 mkstop "$PROJCWD" coder agent-over "$TRANSCRIPT" \
   | HOME="$TMPROOT/retrohome-ignored" CLAUDE_MEMORY_HOME="$OVERHOME" \
-    bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
+    bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
 expect "CLAUDE_MEMORY_HOME wins over HOME" 1 \
   "$( [ -f "$OVERHOME/.claude/projects/G--git-retroproj/memory/retro.md" ] && echo 1 || echo 0 )"
 mkstart "$PROJCWD" | HOME="$TMPROOT/retrohome-ignored" CLAUDE_MEMORY_HOME="$OVERHOME" \
-  bash "$ROOT/hooks/retro-brief.sh" > "$TMPROOT/over.out" 2>/dev/null
+  bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$TMPROOT/over.out" 2>/dev/null
 expect "brief honours CLAUDE_MEMORY_HOME too" 1 "$(grep -c 'agent-over' "$TMPROOT/over.out")"
 
 # --- 8. round trip: the two hooks must agree on the slug, or the feature is a
@@ -4976,8 +4976,8 @@ expect "brief honours CLAUDE_MEMORY_HOME too" 1 "$(grep -c 'agent-over' "$TMPROO
 RTHOME="$TMPROOT/retrohome-rt"
 mkdir -p "$RTHOME"
 mkstop "$PROJCWD" code-reviewer agent-rt99 "$TRANSCRIPT" \
-  | HOME="$RTHOME" bash "$ROOT/hooks/retro-ledger.sh" >/dev/null 2>&1
-mkstart "$PROJCWD" | HOME="$RTHOME" bash "$ROOT/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
+  | HOME="$RTHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-ledger.sh" >/dev/null 2>&1
+mkstart "$PROJCWD" | HOME="$RTHOME" bash "$ROOT/plugins/cct-learning/hooks/retro-brief.sh" > "$BRIEFOUT" 2>/dev/null
 expect "round trip: brief replays the entry" 1 "$(grep -c 'agent-rt99' "$BRIEFOUT")"
 else
 skip "retro-ledger + retro-brief cases" "no node on this host" 32
@@ -5091,6 +5091,39 @@ ctr "reviewer: STRING 'clean' passes" "$TMPROOT/ct5" code-reviewer a-cl "$CT_CLE
 CT_CHAT="$TMPROOT/contract-chat.jsonl"
 trow_str 'Looks fine to me, nothing to flag.' > "$CT_CHAT"
 ctr "reviewer: STRING prose blocks" "$TMPROOT/ct6" code-reviewer a-ch "$CT_CHAT" 2 \
+  "CONTRACT VIOLATION"
+
+# --- 4b. v6.3: a reviewer verdict of 'clean' may be followed by ONE Follow-ups block ---
+CT_FU="$TMPROOT/contract-fu.jsonl"
+trow_str 'clean
+Follow-ups:
+- rename the helper
+- add a docs line' > "$CT_FU"
+ctr "reviewer: 'clean' + Follow-ups block passes" "$TMPROOT/ct5a" code-reviewer a-fu "$CT_FU" 0
+CT_FU_ARR="$TMPROOT/contract-fu-arr.jsonl"
+trow_text 'clean
+Follow-ups:
+- one' > "$CT_FU_ARR"
+ctr "reviewer: ARRAY-shaped 'clean' + block passes" "$TMPROOT/ct5b" code-reviewer a-fu2 "$CT_FU_ARR" 0
+CT_FU_EMPTY="$TMPROOT/contract-fu-empty.jsonl"
+trow_str 'clean
+Follow-ups:' > "$CT_FU_EMPTY"
+ctr "reviewer: 'clean' + header with no item blocks" "$TMPROOT/ct5c" code-reviewer a-fu3 "$CT_FU_EMPTY" 2 \
+  "CONTRACT VIOLATION"
+CT_FU_PROSE="$TMPROOT/contract-fu-prose.jsonl"
+trow_str 'clean
+Looks fine to me.
+Follow-ups:
+- one' > "$CT_FU_PROSE"
+ctr "reviewer: 'clean' + prose before the block blocks" "$TMPROOT/ct5d" code-reviewer a-fu4 "$CT_FU_PROSE" 2 \
+  "CONTRACT VIOLATION"
+CT_FU_TWO="$TMPROOT/contract-fu-two.jsonl"
+trow_str 'clean
+Follow-ups:
+- one
+Follow-ups:
+- two' > "$CT_FU_TWO"
+ctr "reviewer: 'clean' + two blocks blocks" "$TMPROOT/ct5e" code-reviewer a-fu5 "$CT_FU_TWO" 2 \
   "CONTRACT VIOLATION"
 
 # --- 5. the loop guard bounds at ONE prod, over a SHARED marker dir ----------
@@ -5315,7 +5348,7 @@ bud() {
   bud_err="$TMPROOT/budget.err"
   mkdir -p "$bud_tmp"
   printf '%s' "$(mkbudget "$bud_tool" "$bud_id" "$bud_sess")" \
-    | TMPDIR="$bud_tmp" bash "$ROOT/hooks/agent-budget-warn.sh" \
+    | TMPDIR="$bud_tmp" bash "$ROOT/plugins/cct-guards/hooks/agent-budget-warn.sh" \
       >/dev/null 2>"$bud_err"
   bud_got=$?
   if [ "$bud_got" = "$bud_want" ] &&
@@ -5835,7 +5868,7 @@ check_env "python3: quoted -C space repo"      "$PYONLY" hooks/no-push-main.sh 2
 check_env "python3: gh pr merge needs artifact" "$PYONLY" hooks/gate-before-merge.sh 2 \
   "$(mkjson Bash 'gh pr merge 1 --squash' "$GATEREPO")"
 # A node-only hook on a python3 box names the parser it actually needs.
-check_env "python3: read-size-gate names node" "$PYONLY" hooks/read-size-gate.sh 0 \
+check_env "python3: read-size-gate names node" "$PYONLY" plugins/cct-guards/hooks/read-size-gate.sh 0 \
   "$(mkread "$ROOT/README.md" - -)" "node not usable (found python3)"
 else
 skip "python3 git-gate cases" "no python3 on this host" 5
@@ -5968,11 +6001,11 @@ else
 fi
 
 # --- the fail-open hooks stay open, but say so once -------------------------
-check_env "no parser: read-size-gate warns"    "$NOPARSER" hooks/read-size-gate.sh 0 \
+check_env "no parser: read-size-gate warns"    "$NOPARSER" plugins/cct-guards/hooks/read-size-gate.sh 0 \
   "$(mkread "$ROOT/README.md" - -)" "$NEEDLE_WARN"
 check_env "no parser: enforce-delegation warns" "$NOPARSER" hooks/enforce-delegation.sh 0 \
   "$(mkjson Bash 'pytest' "$DELEGREPO")" "$NEEDLE_WARN"
-check_env "no parser: bash-output-guard warns" "$NOPARSER" hooks/bash-output-guard.sh 0 \
+check_env "no parser: bash-output-guard warns" "$NOPARSER" plugins/cct-guards/hooks/bash-output-guard.sh 0 \
   "$(mkpost 40000)" "$NEEDLE_WARN"
 check_env "no parser: agent-contract warns"    "$NOPARSER" hooks/enforce-agent-contract.sh 0 \
   "$(mkstop "$ROOT" coder a1 /nonexistent)" "$NEEDLE_WARN"
@@ -5995,7 +6028,7 @@ warnruns() { # <session-json> [<session-json> ...] -> WARN line count
   rm -f "$TMPROOT/once.err"; : > "$TMPROOT/once.err"
   for wj in "$@"; do
     printf '%s' "$wj" | PATH="$NOPARSER" TMPDIR="$ONCETMP" \
-      "$BASHABS" "$ROOT/hooks/read-size-gate.sh" >/dev/null 2>>"$TMPROOT/once.err"
+      "$BASHABS" "$ROOT/plugins/cct-guards/hooks/read-size-gate.sh" >/dev/null 2>>"$TMPROOT/once.err"
   done
   grep -c 'enforcement inactive' "$TMPROOT/once.err"
 }
@@ -6136,7 +6169,7 @@ check_env "broken node + python3: feature allowed" "$STUB_NODE_PY" hooks/no-push
   "$(mkjson Bash 'git push -u origin feature/x' "$FEATREPO")"
 # json_require_node's own path: `command -v node` SUCCEEDS here, so without the
 # probe this hook would run the stub, get nothing, and fail open in silence.
-check_env "broken node: require_node names the fallback" "$STUB_NODE_PY" hooks/read-size-gate.sh 0 \
+check_env "broken node: require_node names the fallback" "$STUB_NODE_PY" plugins/cct-guards/hooks/read-size-gate.sh 0 \
   "$(mkread "$ROOT/README.md" - -)" "node not usable (found python3)"
 else
 skip "broken node + python3 cases" "no python3 on this host" 3
@@ -7540,7 +7573,7 @@ fw4scratch() { # <name> <hookfile> -> prints a scratch hooks/ dir holding a
                # corrupt arm even runs.
   local d="$TMPROOT/fw4-$1/hooks"
   mkdir -p "$d/lib"
-  cp "$ROOT/hooks/$2" "$d/$2"
+  cp "$ROOT/hooks/$2" "$d/$2" 2>/dev/null || cp "$ROOT/plugins/cct-guards/hooks/$2" "$d/$2"   # v7.0.0: post-edit-build moved into cct-guards
   cp -r "$ROOT/hooks/lib/." "$d/lib/"
   printf '%s\n' "$d"
 }
@@ -8357,7 +8390,7 @@ a3_cmd() { # <tool_name> <shell command> <agent_id> -- a Bash-shaped payload
 a3_run() {
   a3_label="$1"; a3_tmp="$2"; a3_pl="$3"; a3_want="$4"; a3_needle="${5:-}"
   a3_err="$TMPROOT/a3.err"
-  printf '%s' "$a3_pl" | TMPDIR="$a3_tmp" bash "$ROOT/hooks/agent-budget-warn.sh" \
+  printf '%s' "$a3_pl" | TMPDIR="$a3_tmp" bash "$ROOT/plugins/cct-guards/hooks/agent-budget-warn.sh" \
     >/dev/null 2>"$a3_err"
   a3_got=$?
   if [ "$a3_got" = "$a3_want" ] &&
@@ -8434,7 +8467,7 @@ mkdir -p "$A3GR/.claude" && git -C "$A3GR" init -q 2>/dev/null
 a3_n=$((a3_n + 1)); a3_t="$TMPROOT/a3bud$a3_n"
 mkdir -p "$a3_t/claude-agent-budget/a3sess"; printf '%s' 119 > "$a3_t/claude-agent-budget/a3sess/a3-agent"
 printf '{"session_id":"a3sess","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m x"},"cwd":"%s","agent_id":"a3-agent"}\n' "$(jesc "$A3GR")" \
-  | TMPDIR="$a3_t" bash "$ROOT/hooks/agent-budget-warn.sh" >/dev/null 2>&1
+  | TMPDIR="$a3_t" bash "$ROOT/plugins/cct-guards/hooks/agent-budget-warn.sh" >/dev/null 2>&1
 expect "A3 tree-clean: git status --porcelain shows nothing after the hook logs" "" "$(git -C "$A3GR" status --porcelain 2>/dev/null)"
 expect "A3 tree-clean: the log is under <common git dir>/cct/" "yes" \
   "$(grep -q 'calls=120 action=commit-allowed' "$A3GR/.git/cct/liveness.log" 2>/dev/null && echo yes || echo no)"
@@ -8622,6 +8655,81 @@ b1 "N-3 ok: cd && (if..fi)"                      0 "cd /x && (if a; then b; fi)"
 b1 "N-3 ok: cd && (case..esac)"                  0 "cd /x && (case \$a in x) y;; esac)"
 b1 "N-3 ok: cd && nested glued (for..)"          0 "cd /x && (for a in b; do (for c in d; do e; done); done)"
 b1 "N-3 ok: cd && \${var} inside a group"        0 "cd /x && { echo \${x}; echo \${y}; }"
+# -- v6.3 self-review item 1 (user decision #47): a leading cd INSIDE the session cwd
+# followed only by read-only commands passes. Two-sided: every other shape keeps the refusal.
+b1c() { # <label> <expected_exit> <command> [cwd, default /w/proj; may be empty]
+  check "B1 v6.3 $1" hooks/deny-hang-shapes.sh "$2" "$(mkjson Bash "$3" "${4-/w/proj}")"
+}
+b1c "ok: cd cwd && grep && sed -n"         0 "cd /w/proj && grep -n x a.txt && sed -n 10,40p b.txt"
+b1c "ok: cd cwd/sub && ls && wc"           0 "cd /w/proj/sub && ls && wc -l f"
+b1c "ok: cd cwd && find | head"            0 "cd /w/proj && find . -name '*.md' | head -5"
+b1c "ok: cd cwd && find | head && ls"      0 "cd /w/proj && find . -name '*.md' | head -5 && ls"
+b1c "ok: cd cwd/ (trailing /) ; ls ; cat"  0 "cd /w/proj/ ; ls ; cat f" "/w/proj/"
+b1c "ok: sed -n '5,\$p' and bare 3p"       0 "cd /w/proj && sed -n '5,\$p' f && sed -n 3p g"
+b1c "ok: rg + tail -n + head"              0 "cd /w/proj && rg -n 'a|b' src && tail -n 5 f | head -2"
+b1c "ref: redirect"                        2 "cd /w/proj && grep x a > out && ls"
+b1c "ref: sed -i"                          2 "cd /w/proj && sed -i s/a/b/ f && ls"
+b1c "ref: sed w command"                   2 "cd /w/proj && sed -n 1p f && sed -n '1w x' f"
+b1c "ref: sed range with a second flag"    2 "cd /w/proj && sed -n 1p -i f && ls"
+b1c "ref: find -delete"                    2 "cd /w/proj && find . -delete && ls"
+b1c "ref: find -exec"                      2 "cd /w/proj && find . -exec rm {} + && ls"
+b1c "ref: find -ex\"\"ec (quote-glued)"     2 "cd /w/proj && find . -ex\"\"ec rm {} + && ls"
+b1c "ref: pipe into sh"                    2 "cd /w/proj && ls | sh && ls"
+b1c "ref: command substitution"            2 "cd /w/proj && cat \$(ls) && ls"
+b1c "ref: backtick substitution"           2 "cd /w/proj && cat \`ls\` && ls"
+b1c "ref: git is not on the list"          2 "cd /w/proj && git status && ls"
+b1c "ref: relative cd target"              2 "cd sub && ls && wc -l f"
+b1c "ref: .. component"                    2 "cd /w/proj/../other && ls && ls"
+b1c "ref: tilde target"                    2 "cd ~/proj && ls && ls"
+b1c "ref: sibling dir sharing the prefix"  2 "cd /w/proj2 && ls && ls"
+b1c "ref: quoted cd target"                2 "cd \"/w/proj\" && ls && ls"
+b1c "ref: variable cd target"              2 "cd \$HOME && ls && ls"
+b1c "ref: || in the chain"                 2 "cd /w/proj && ls || ls && wc -l f"
+b1c "ref: single & in the chain"           2 "cd /w/proj && ls & wc -l f && ls"
+b1c "ref: input redirect"                  2 "cd /w/proj && wc -l < f && ls"
+b1c "ref: rg --pre runs a program"         2 "cd /w/proj && rg --pre sh x && ls"
+b1c "ref: tail -f never returns"           2 "cd /w/proj && tail -f log && ls"
+b1c "ref: tail --follow never returns"     2 "cd /w/proj && tail --follow log && ls"
+b1c "ref: tail --f (GNU prefix of --follow)"   2 "cd /w/proj && tail --f log && ls"
+b1c "ref: tail --fo (GNU prefix of --follow)"  2 "cd /w/proj && tail --fo log && ls"
+b1c "ref: tail --fol=name (prefix with a value)" 2 "cd /w/proj && tail --fol=name log && ls"
+b1c "ref: second cd in the chain"          2 "cd /w/proj && cd / && ls"
+# fix round 1: text after a heredoc is not hidden from the subset, and an option word
+# hidden by quotes, braces or ${...} is refused (blanket rules, no parsing)
+b1c "ref: heredoc, then a command"         2 "cd /w/proj && ls && cat <<EOF${b1nl}hi${b1nl}EOF${b1nl}rm -rf foo"
+b1c "ref: heredoc with a redirect"         2 "cd /w/proj && ls && grep x <<EOF > out${b1nl}hi${b1nl}EOF"
+b1c "ref: heredoc with a >| redirect"      2 "cd /w/proj && ls && wc -l <<'EOF' >| out${b1nl}hi${b1nl}EOF"
+b1c "ref: find \"-delete\""                 2 "cd /w/proj && find . \"-delete\" && ls"
+b1c "ref: find '-exec'"                    2 "cd /w/proj && find . '-exec' rm {} + && ls"
+b1c "ref: find -o '-fprint'"               2 "cd /w/proj && find . -name x -o '-fprint' out && ls"
+b1c "ref: find -{delete,print}"            2 "cd /w/proj && find . -{delete,print} && ls"
+b1c "ref: find -de\${x}lete"                2 "cd /w/proj && find . -de\${x}lete && ls"
+b1c "ref: sed -n 1p \"-i\""                 2 "cd /w/proj && sed -n 1p \"-i\" f && ls"
+b1c "ref: sed -n 1p '--in-place'"          2 "cd /w/proj && sed -n 1p '--in-place' f && ls"
+b1c "ref: sed -n 1p \"\"-i"                 2 "cd /w/proj && sed -n 1p \"\"-i f && ls"
+b1c "ref: sed bare \$ range"               2 "cd /w/proj && sed -n 5,\$p f && ls"
+b1c "ref: rg \"--pre\""                     2 "cd /w/proj && rg \"--pre\" sh x && ls"
+b1c "ref: rg '--pre=sh'"                   2 "cd /w/proj && rg '--pre=sh' x && ls"
+b1c "ref: tail '-f'"                       2 "cd /w/proj && tail '-f' log && ls"
+b1c "ref: tail \"\"-f"                      2 "cd /w/proj && tail \"\"-f log && ls"
+# fix round 2: a double-quoted expansion builds an option word the checks cannot see; the rest
+# of the command is a character whitelist, so double quotes, $, globs and brackets all refuse
+b1c "ref: find . \"\${x:--delete}\""         2 "cd /w/proj && ls && find . \"\${x:--delete}\""
+b1c "ref: sed -n 1p \"\${x:--i}\""          2 "cd /w/proj && ls && sed -n 1p \"\${x:--i}\" f"
+b1c "ref: tail \"\${x:--f}\""               2 "cd /w/proj && ls && tail \"\${x:--f}\" log"
+b1c "ref: rg \"\${x:---pre=sh}\""           2 "cd /w/proj && ls && rg \"\${x:---pre=sh}\" x"
+b1c "ref: find . \"\$_\""                   2 "cd /w/proj && ls && ls -d -- -delete ; find . \"\$_\""
+b1c "ref: find . \"\$x\""                   2 "cd /w/proj && ls && find . \"\$x\""
+b1c "ref: find -dele[t]e (glob)"           2 "cd /w/proj && ls && find . -dele[t]e"
+b1c "ref: find -delet? (glob)"             2 "cd /w/proj && ls && find . -delet?"
+b1c "ref: double-quoted pattern"           2 "cd /w/proj && ls && grep \"x\" f"
+b1c "ref: bare \$VAR"                      2 "cd /w/proj && ls && cat \$f"
+b1c "ref: bare * glob"                     2 "cd /w/proj && ls && cat *.md"
+b1c "ref: backslash"                       2 "cd /w/proj && ls && cat a\\ b"
+b1c "ref: single-quoted -pattern"          2 "cd /w/proj && ls && grep '-v' f"
+b1c "ref: unbalanced single quote"         2 "cd /w/proj && ls && grep it's f"
+b1c "ok: single-quoted pattern with \$ and >" 0 "cd /w/proj && ls && grep -rn 'x\$|a>b' src"
+b1c "ref: empty cwd"                     2 "cd /w/proj && grep -n x a.txt && sed -n 10,40p b.txt" ""
 # ---- end v4.3.0 B1
 
 # ---- v4.3.0 C1: model-floor gives a model-less spawn the project default ----
@@ -10073,11 +10181,11 @@ rm -rf "$JMGD/jev"
 # EXACT so a test file that stops being discovered goes red, and nothing may
 # skip (a skipped E2E test would hide a missing hooks/lib/agent-model.sh).
 # Skipped by name (4) only where python3 is absent: the jq-only matrix config.
-echo "=== skills/jev (v4.4.0 J-PY) ==="
+echo "=== plugins/cct-jev/skills/jev (v4.4.0 J-PY) ==="
 JPY_WANT=145
-JPY_DIR="$ROOT/skills/jev"
+JPY_DIR="$ROOT/plugins/cct-jev/skills/jev"
 if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
-  JPY_OUT=$(JEV_REPO_ROOT="$(natpath "$ROOT")" PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$(natpath "$JPY_DIR/tests")" -p 'test_*.py' 2>&1); JPY_RC=$?
+  JPY_OUT=$(env -u JEV_REPO_ROOT -u TYPESAFE_API_KEY PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$(natpath "$JPY_DIR/tests")" -p 'test_*.py' 2>&1); JPY_RC=$?
   [ "$JPY_RC" -eq 0 ] || printf '%s\n' "$JPY_OUT" | tail -40
   expect "J-PY python tests pass"               0 "$JPY_RC"
   expect "J-PY ran exactly $JPY_WANT tests"     "$JPY_WANT" "$(printf '%s\n' "$JPY_OUT" | sed -n 's/^Ran \([0-9]*\) tests\{0,1\} in .*/\1/p')"
@@ -10567,7 +10675,7 @@ check "V3 control: find . -exec bash {} \\;"          hooks/pre-commit-test.sh 0
 # ---- v4.4.0 C2a: the fail-closed hooks map their own exit 127 to 2 in-hook (the old registration wrapper's job; exec/source forms cannot wrap) ----
 C2AR=$(mkrepo c2a main)
 C2AOK="$(mkjson Bash 'ls -la' "$C2AR")"
-C2AHOOKS="pre-commit-test no-push-main gate-before-merge deny-secret-reads deny-claude-md-writes"
+C2AHOOKS="pre-commit-test no-push-main gate-before-merge deny-secret-reads deny-claude-md-writes backlog-item-check"
 for c2a_h in $C2AHOOKS; do
   c2a_f="$ROOT/hooks/$c2a_h.sh"
   # (i) the exact trap line, once
@@ -10597,11 +10705,12 @@ C2AAWK='FNR==1{d=0} /^[a-zA-Z_][a-zA-Z0-9_]*\(\) *\{|^function /{d=1} /^[a-zA-Z_
 # A mid-line return (`[ x ] && return 4`, `|| return 0`, `; return`, `then return`) is matched too; the one exemption is an awk program held in a GC_AWK_* string assignment (hooks/lib/git-cmd.sh).
 # Not handled: an indented closing brace ending a column-0 function does not reset the depth flag (a later top-level return in that file would be missed after it; none exists, and the one-line/col-0 resets cover every function here).
 C2ARFILES=""
-for c2a_h in no-push-main deny-secret-reads deny-hang-shapes model-floor bash-output-guard pre-commit-test gate-before-merge deny-claude-md-writes; do
+for c2a_h in no-push-main deny-secret-reads deny-hang-shapes model-floor pre-commit-test gate-before-merge deny-claude-md-writes backlog-item-check; do
   C2ARFILES="$C2ARFILES $ROOT/hooks/$c2a_h.sh"
 done
+C2ARFILES="$C2ARFILES $ROOT/plugins/cct-guards/hooks/bash-output-guard.sh"   # v7.0.0: moved into cct-guards
 expect "C2a: R-1 no top-level return in any sourced/wrapped hook or hook lib" "" \
-  "$(awk "$C2AAWK" $C2ARFILES "$ROOT"/hooks/lib/*.sh)"
+  "$(awk "$C2AAWK" $C2ARFILES "$ROOT"/hooks/lib/*.sh "$ROOT"/plugins/*/hooks/lib/*.sh)"
 cp "$ROOT/hooks/no-push-main.sh" "$TMPROOT/c2a-ret.sh"; printf 'return 5\n' >> "$TMPROOT/c2a-ret.sh"
 expect "C2a: R-1 control: the same awk reports exactly one hit on a copy with a top-level return" 1 \
   "$(awk "$C2AAWK" "$TMPROOT/c2a-ret.sh" | wc -l | tr -d ' ')"
@@ -10616,19 +10725,19 @@ expect "C2a: R-1 control: a mid-line && return is caught (exactly one hit)" 1 \
 printf 'f() { :; } # c\nreturn 5\n' > "$TMPROOT/c2a-ret3.sh"
 expect "C2a: R-1 control: a one-line function with a trailing comment does not mask a later return" 1 \
   "$(awk "$C2AAWK" "$TMPROOT/c2a-ret3.sh" | wc -l | tr -d ' ')"
-expect "C2a: R-2 the EXIT-trap hooks are exactly the five (run-gate.sh is not a registered hook; v4.5.0 retired require-skills-block)" \
-  "deny-claude-md-writes.sh deny-secret-reads.sh gate-before-merge.sh no-push-main.sh pre-commit-test.sh" \
-  "$(grep -liE "$C2ATRAPRE" "$ROOT"/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+expect "C2a: R-2 the EXIT-trap hooks are exactly the six (run-gate.sh is not a registered hook; v4.5.0 retired require-skills-block; v6.3 added backlog-item-check)" \
+  "backlog-item-check.sh deny-claude-md-writes.sh deny-secret-reads.sh gate-before-merge.sh no-push-main.sh pre-commit-test.sh" \
+  "$(grep -liE "$C2ATRAPRE" "$ROOT"/hooks/*.sh "$ROOT"/plugins/*/hooks/*.sh | xargs -n1 basename | grep -v '^run-gate\.sh$' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 for c2a_h in $C2AHOOKS; do
   expect "C2a: R-2 $c2a_h has exactly one EXIT/0 trap" 1 "$(grep -ciE "$C2ATRAPRE" "$ROOT/hooks/$c2a_h.sh")"
 done
 expect "C2a: R-2 no hook lib sets an EXIT/0 trap (sourced after the hook's, it would replace it)" 0 \
-  "$(cat "$ROOT"/hooks/lib/*.sh | grep -ciE "$C2ATRAPRE")"
+  "$(cat "$ROOT"/hooks/lib/*.sh "$ROOT"/plugins/*/hooks/lib/*.sh | grep -ciE "$C2ATRAPRE")"
 cp "$ROOT/hooks/no-push-main.sh" "$TMPROOT/c2a-trap2.sh"; printf "trap 'x' exit;\n" >> "$TMPROOT/c2a-trap2.sh"
 expect "C2a: R-2 control: the per-hook count goes to 2 on a copy with a second EXIT trap" 2 "$(grep -ciE "$C2ATRAPRE" "$TMPROOT/c2a-trap2.sh")"
 expect "C2a: R-1 the set -u hooks are exactly the four non-sourced ones" \
   "agent-budget-warn.sh post-edit-build.sh retro-brief.sh retro-ledger.sh" \
-  "$(grep -lE '^[[:space:]]*set[[:space:]]+(-[a-zA-Z]*u|-o[[:space:]]+nounset)' "$ROOT"/hooks/*.sh | xargs -n1 basename | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+  "$(grep -lE '^[[:space:]]*set[[:space:]]+(-[a-zA-Z]*u|-o[[:space:]]+nounset)' "$ROOT"/hooks/*.sh "$ROOT"/plugins/*/hooks/*.sh | xargs -n1 basename | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 # ---- end v4.4.0 C2a
 
 # ---- v4.4.0 C3: json_fields -- any field list, ONE parser run; json_payload is built on it ----
@@ -10830,7 +10939,7 @@ c4_post() { # <stdout body, JSON-escaped> -> a PostToolUse payload
 }
 c4_bog() { # <label> <want 1 = prints a truncation, 0 = silent> <stdout body>
   c4_t="$TMPROOT/c4tmp.$$.$RANDOM"; mkdir -p "$c4_t"
-  c4_o=$(c4_post "$3" | env TMPDIR="$c4_t" ${C4LOC:+LC_ALL="$C4LOC" LANG="$C4LOC"} bash "$ROOT/hooks/bash-output-guard.sh" 2>/dev/null); c4_rc=$?
+  c4_o=$(c4_post "$3" | env TMPDIR="$c4_t" ${C4LOC:+LC_ALL="$C4LOC" LANG="$C4LOC"} bash "$ROOT/plugins/cct-guards/hooks/bash-output-guard.sh" 2>/dev/null); c4_rc=$?
   c4_g=0; [ -n "$c4_o" ] && c4_g=1
   expect "C4 bash-output-guard: $1" "$2:0" "$c4_g:$c4_rc"
 }
@@ -11132,6 +11241,9 @@ C2H0="$TMPROOT/c2b-home0"; mkdir -p "$C2H0"
 c2b_proj() { # <name> -> a project holding every repo hook and the v4.6.1 general template settings; echoes its path
   c2p_d="$TMPROOT/c2b-$1"; rm -rf "$c2p_d"; mkdir -p "$c2p_d/.claude"
   cp -R "$ROOT/hooks" "$c2p_d/hooks"; cp "$ROOT/scripts/fixtures/v461-template-settings.json" "$c2p_d/.claude/settings.json"
+  # v7.0.0: the frozen v4.6.1 settings register the four cct-guards hooks under hooks/; they now live in the plugin
+  cp "$ROOT"/plugins/cct-guards/hooks/{read-size-gate,bash-output-guard,agent-budget-warn,post-edit-build}.sh "$c2p_d/hooks/"
+  cp "$ROOT"/plugins/cct-learning/hooks/{retro-ledger,retro-brief}.sh "$c2p_d/hooks/"   # v7.0.0: likewise the two cct-learning hooks
   printf '%s' "$c2p_d"
 }
 c2b_run() { # <home> <proj, or - for unset> [verify-hooks args] ; runs the project's copy; sets C2RC, C2OUT
@@ -11717,6 +11829,63 @@ if [ "$(uname -s)" = "Linux" ]; then
   else
     skip "DL14 CRLF python3 output (drift probe parsers)" "needs python3" 4
   fi
+  # DL15 (v7.0.0): the machine's own choice is its enabledPlugins. A dagonet plugin besides cct that settings.json
+  # enables (== true) but that is not installed is drift; installed-but-not-enabled, disabled, and absent are not. The
+  # list of installed ones is information (an OPTIONAL PLUGINS line), never a drift line by itself.
+  dl_opt() { # <enabledPlugins entries as a JSON object> <installed ids...> : cct at VERSION plus those, at VERSION
+    dl_eo=$1; shift
+    { printf '{"version":2,"plugins":{"cct@dagonet":[{"scope":"user","version":"%s"}]' "$DL_VER"
+      for dl_i in "$@"; do printf ',"%s":[{"scope":"user","version":"%s"}]' "$dl_i" "$DL_VER"; done
+      printf '}}\n'; } > "$DL_H/.claude/plugins/installed_plugins.json"
+    sed 's#G:/git#~/git#g' "$DL_REF/settings.json" | jq --argjson e "$dl_eo" '.enabledPlugins += $e' > "$DL_H/.claude/settings.json"
+  }
+  dl_optl() { printf '%s\n' "$1" | grep '^OPTIONAL PLUGINS'; }
+  if command -v jq >/dev/null 2>&1; then
+    dl_opt '{"cct-guards@dagonet":true}' cct-guards@dagonet
+    DL_OUT=$(dl_run)
+    expect "DL15 an optional plugin enabled and installed at VERSION: exit 0" 0 "$(dl_rc)"
+    expect "DL15 ... the information line lists it as enabled" 1 "$(dl_optl "$DL_OUT" | grep -cF "cct-guards@dagonet $DL_VER (enabled)")"
+    expect "DL15 ... and it is no drift line" 0 "$(printf '%s\n' "$DL_OUT" | grep -c '^  OPTIONAL PLUGIN MISSING')"
+    dl_opt '{"cct-learning@dagonet":true}'
+    DL_OUT=$(dl_run)
+    expect "DL15 an optional plugin enabled but not installed: exit 1" 1 "$(dl_rc)"
+    expect "DL15 ... names it, with the install command" 1 "$(printf '%s\n' "$DL_OUT" | grep -cF '  OPTIONAL PLUGIN MISSING: cct-learning@dagonet is enabled in')"
+    expect "DL15 ... exactly one drift line" 1 "$(printf '%s\n' "$DL_OUT" | grep -c '^  [A-Z]')"
+    dl_opt '{"cct-learning@dagonet":false}'
+    expect "DL15 an optional plugin disabled and not installed: exit 0" 0 "$(dl_rc)"
+    dl_opt '{}' cct-helpers@dagonet
+    DL_OUT=$(dl_run)
+    expect "DL15 installed but absent from enabledPlugins: exit 0" 0 "$(dl_rc)"
+    expect "DL15 ... the information line says it is not enabled" 1 "$(dl_optl "$DL_OUT" | grep -cF "cct-helpers@dagonet $DL_VER (not enabled)")"
+    dl_opt '{}'
+    expect "DL15 none installed: the information line says so" 1 "$(dl_optl "$(dl_run)" | grep -cF 'none installed')"
+    expect "DL15 none installed: exit 0" 0 "$(dl_rc)"
+    # a plugin enabled and installed at another version: the sub-plugin arm already reports it; this arm adds no second line
+    printf '{"version":2,"plugins":{"cct@dagonet":[{"scope":"user","version":"%s"}],"cct-guards@dagonet":[{"scope":"user","version":"0.0.1"}]}}\n' "$DL_VER" > "$DL_H/.claude/plugins/installed_plugins.json"
+    sed 's#G:/git#~/git#g' "$DL_REF/settings.json" | jq '.enabledPlugins["cct-guards@dagonet"]=true' > "$DL_H/.claude/settings.json"
+    DL_OUT=$(dl_run)
+    expect "DL15 enabled at another version: exit 1, one SUBPLUGIN DRIFT line and no MISSING line" "1:1:0" \
+      "$(dl_rc):$(printf '%s\n' "$DL_OUT" | grep -c '^  SUBPLUGIN DRIFT: cct-guards@dagonet ')":"$(printf '%s\n' "$DL_OUT" | grep -c '^  OPTIONAL PLUGIN MISSING')"
+    # M2: an installed sub-plugin at the wrong version is drift even when settings.json has it DISABLED (kept direction)
+    sed 's#G:/git#~/git#g' "$DL_REF/settings.json" | jq '.enabledPlugins["cct-guards@dagonet"]=false' > "$DL_H/.claude/settings.json"
+    DL_OUT=$(dl_run)
+    expect "DL15 disabled but installed at another version: still drift (exit 1, one SUBPLUGIN DRIFT line, no MISSING line)" "1:1:0" \
+      "$(dl_rc):$(printf '%s\n' "$DL_OUT" | grep -c '^  SUBPLUGIN DRIFT: cct-guards@dagonet ')":"$(printf '%s\n' "$DL_OUT" | grep -c '^  OPTIONAL PLUGIN MISSING')"
+    dl_plugins "$DL_VER"; sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"
+    expect "DL15 the clean HOME of DL1 (cct alone, nothing else enabled): the line reads none installed" 1 "$(dl_optl "$(dl_run)" | grep -cF 'none installed')"
+    # DL15 with CRLF python3 output: one record per line must still be read (the DL14 lesson)
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' 2>/dev/null; then
+      dl_opt '{"cct-guards@dagonet":true}' cct-guards@dagonet
+      expect "DL15 CRLF python3, an enabled installed plugin: exit 0" 0 "$(dl_cr_rc)"
+      dl_opt '{"cct-guards@dagonet":true}'
+      expect "DL15 CRLF python3, an enabled missing plugin: exit 1" 1 "$(dl_cr_rc)"
+    else
+      skip "DL15 CRLF python3 output (optional plugin arm)" "needs python3" 2
+    fi
+    sed 's#G:/git#~/git#g' "$DL_REF/settings.json" > "$DL_H/.claude/settings.json"; dl_plugins "$DL_VER"
+  else
+    skip "DL15 optional plugin arm (enabledPlugins)" "needs jq" 16
+  fi
   # DL7 linux_check_rendered, the installer's two post-checks (one function, shared)
   dl_chk() { ( . "$ROOT/scripts/linux/linux-render.sh"; linux_check_rendered "$1" >/dev/null 2>&1; echo $? ); }
   printf '## Platform: Linux + bash\nclean\n' > "$TMPROOT/dl-ok.md"
@@ -11764,7 +11933,7 @@ if [ "$(uname -s)" = "Linux" ]; then
     skip_host "DL10 older tag falls back to the raw comparison" "tag v4.6.0 absent or already carries linux-render.sh" 2
   fi
 else
-  skip_host "DL1-14 drift script (Linux rendering, plugin, sub-plugins, leftovers, stale registration, CRLF)" "not a Linux host" 52
+  skip_host "DL1-15 drift script (Linux rendering, plugin, sub-plugins, optional plugins, leftovers, stale registration, CRLF)" "not a Linux host" 68
 fi
 # ---- end v5.0 drift
 # ---- v5.0: install-user-level-linux.sh never removes anything before cct@dagonet is installed
@@ -11787,6 +11956,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
     '  installfail:"plugin install cct@dagonet") echo "install failed" >&2; exit 1 ;;' \
     '  ok:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
     '  oldver:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"0.0.0\"}]\n"; exit 0 ;;' \
+    '  sub:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"%s\"},{\"id\":\"cct-guards@dagonet\",\"scope\":\"user\",\"enabled\":true,\"version\":\"%s\"}]\n" "$IU_VER" "$IU_VER"; exit 0 ;;' \
     '  disabled:"plugin list --json") printf "[{\"id\":\"cct@dagonet\",\"scope\":\"user\",\"enabled\":false,\"version\":\"%s\"}]\n" "$IU_VER"; exit 0 ;;' \
     '  *:"plugin install "*) f="$HOME/.claude/settings.json"; [ -s "$f" ] || echo "{}" > "$f"; jq --arg i "$3" ".enabledPlugins[\$i]=true" "$f" > "$f.t" && mv "$f.t" "$f"; exit 0 ;;' \
     '  *:"plugin update "*) : > "$HOME/update.marker"; exit 0 ;;' \
@@ -11917,6 +12087,58 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   iu_up afterinst 1 nolist ok /ok
   expect "IU die after a successful install: exits non-zero" 1 "$([ "$iu_rc" -ne 0 ] && echo 1 || echo 0)"
   expect "IU die after a successful install: no 'removed' recovery text" 0 "$(grep -c 'was removed and cct@dagonet is not installed' "$iu_h/out")"
+  # IU --with (v7.0.0): the optional plugins are installed only when named. The list is parsed and checked against the
+  # checkout's marketplace.json BEFORE anything is removed; a bad argument leaves the machine as it was. Stub CLI, temp HOME.
+  iu_w() { # <name> <jq filter for the seeded settings.json, or -> <installer args...>: a fresh install; sets iu_h, iu_rc
+    iu_h=$(iu_home "$1"); : > "$iu_h/calls"; iu_wf=$2; shift 2
+    [ "$iu_wf" = - ] || { jq "$iu_wf" "$iu_h/.claude/settings.json" > "$iu_h/s.t" && mv "$iu_h/s.t" "$iu_h/.claude/settings.json"; }
+    ( cd "$TMPROOT" && env -u CLAUDE_CONFIG_DIR HOME="$iu_h" PATH="$IU_GBIN:$IU_BIN:$PATH" IU_MODE="${IU_WMODE:-ok}" IU_HAS=0 IU_TAG=ok IU_LOG="$iu_h/calls" \
+        IU_VER="$(head -1 "$ROOT/VERSION")" CCT_MARKETPLACE=/ok bash "$ROOT/scripts/install-user-level-linux.sh" "$@" >"$iu_h/out" 2>&1 ); iu_rc=$?
+  }
+  iu_inst() { grep -E '^plugin install [^ ]+@dagonet$' "$iu_h/calls" | sed 's/^plugin install //' | paste -sd, -; }
+  iu_nz() { [ "$iu_rc" -ne 0 ] && echo 1 || echo 0; }
+  iu_ncalls() { grep -cE 'marketplace (remove|add)|plugin install' "$iu_h/calls"; }
+  iu_en() { jq -r ".enabledPlugins[\"$1\"]" "$iu_h/.claude/settings.json"; }
+  iu_w with1 - --with cct-guards,cct-helpers
+  expect "IU --with a,b: exit 0" 0 "$iu_rc"
+  expect "IU --with a,b: the dagonet installs are cct, then a, then b" "cct@dagonet,cct-guards@dagonet,cct-helpers@dagonet" "$(iu_inst)"
+  expect "IU --with a,b: both are enabled in settings.json" "true:true" "$(iu_en cct-guards@dagonet):$(iu_en cct-helpers@dagonet)"
+  iu_w with0 -
+  expect "IU no --with: exit 0, and cct is the only dagonet install" "0:cct@dagonet" "$iu_rc:$(iu_inst)"
+  expect "IU no --with: no optional plugin is enabled" 0 "$(jq '[.enabledPlugins | keys[] | select(startswith("cct-"))] | length' "$iu_h/.claude/settings.json")"
+  iu_w withrep - --with cct-guards --with cct-guards,cct-learning
+  expect "IU --with given twice, a name repeated: one install each, in order" "cct@dagonet,cct-guards@dagonet,cct-learning@dagonet" "$(iu_inst)"
+  iu_w withat '.enabledPlugins["cct-guards@dagonet"]=false' --with=cct-guards@dagonet
+  expect "IU --with=name@dagonet: installed" "0:cct@dagonet,cct-guards@dagonet" "$iu_rc:$(iu_inst)"
+  expect "IU --with: a plugin the user had at false is on after the run (the step-3 merge does not turn it back off)" true "$(iu_en cct-guards@dagonet)"
+  expect "IU --with: the user's other false entry stays false" false "$(iu_en superpowers@claude-plugins-official)"
+  iu_w withbad - --with cct-guards,nonesuch
+  expect "IU --with an unknown name: exits non-zero" 1 "$(iu_nz)"
+  expect "IU --with an unknown name: nothing removed, added or installed" 0 "$(iu_ncalls)"
+  expect "IU --with an unknown name: every v4 leftover is still present" "$IU_N" "$(iu_present "$iu_h")"
+  expect "IU --with an unknown name: it names the name" 1 "$(grep -c 'unknown optional plugin: nonesuch' "$iu_h/out")"
+  iu_w withcct - --with cct
+  expect "IU --with cct (not optional): exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withbare - --with
+  expect "IU a bare --with: exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withempty - --with ""
+  expect "IU --with with an empty list: exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withcomma - --with ,,
+  expect "IU --with ,, (no name in the list): exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withblank - --with " "
+  expect "IU --with ' ' (a blank list): exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  iu_w withstar - --with '*'
+  expect "IU --with '*': read as a name, not a glob: exits non-zero, nothing installed, the unknown name is '*'" "1:0:1" \
+    "$(iu_nz):$(iu_ncalls):$(grep -cF 'unknown optional plugin: * (' "$iu_h/out")"
+  iu_w withunk - --nonesuch
+  expect "IU an unknown argument: exits non-zero, nothing installed" "1:0" "$(iu_nz):$(iu_ncalls)"
+  expect "IU an unknown argument: it names the argument" 1 "$(grep -c 'unknown argument: --nonesuch' "$iu_h/out")"
+  iu_all=""
+  for iu_p in cct-guards cct-learning cct-helpers cct-jev dotnet-tools python-tools rust-tools java-tools; do iu_w withall - --with "$iu_p"; iu_all="$iu_all$iu_rc"; done
+  expect "IU --with: each of the eight optional plugins in the marketplace is accepted" 00000000 "$iu_all"
+  # a --with plugin that is already installed: the sub-plugin restore installs it, the --with loop does not again
+  IU_WMODE=sub iu_w withsub - --with cct-guards
+  expect "IU --with a plugin already installed: one install (the restore), not two" "0:cct@dagonet,cct-guards@dagonet" "$iu_rc:$(iu_inst)"
   # IU sub-plugins (v6.1): the real `claude` CLI, a scratch HOME and two local directory marketplaces (old and new
   # version). The remove uninstalls every dagonet plugin and deletes its saved userConfig (measured), so the installer
   # puts back exactly the sub-plugins that were installed, with their enabled state and saved values, and no other.
@@ -11981,7 +12203,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v jq >/dev/null 2>&1; then
   expect "IU subs fail: it says saved options must be re-entered with claude plugin configure <id>" 1 "$(grep -c 'claude plugin configure' "$iu_h/err")"
   expect "IU subs fail: no saved value on stdout or stderr" 0 "$(cat "$iu_h/out" "$iu_h/err" | grep -c -- "$IU_FSEC")"
 else
-  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 60
+  skip_host "IU installer stops before any removal; merge keeps the user's entries; upgrade sequence" "not a Linux host, or no jq" 89
 fi
 # ---- end v5.0 installer
 # ---- v5.0 fix round: a pre-v5.0 tag carries skills/ under user-level-reference/; a released file is not UNRELEASED
@@ -12043,7 +12265,7 @@ rm "$V5HOME/.claude/settings.json"
 rm "$V5H/pre-commit-test.sh"
 expect "v5 run-hook: closed hook, script missing -> exit 2" "rc=2" "$(v5run pre-commit-test 2>/dev/null)"
 expect "v5 run-hook: open hook, script missing -> exit 0" "rc=0" "$(v5run now-brief 2>/dev/null)"
-expect "v5 run-hook: warn hook, script missing -> exit 0 + WARN" "WARN rc=0" "$(v5run read-size-gate 2>&1 | grep -o '^WARN\|rc=0' | tr '\n' ' ' | sed 's/ $//')"
+expect "v5 run-hook: warn hook, script missing -> exit 0 + WARN" "WARN rc=0" "$(v5run enforce-delegation 2>&1 | grep -o '^WARN\|rc=0' | tr '\n' ' ' | sed 's/ $//')"
 expect "v5 run-hook: unknown name -> exit 2" "rc=2" "$(v5run no-such-hook 2>/dev/null)"
 # stdin reaches the hook untouched
 printf '#!/usr/bin/env bash\ncat\n' > "$V5H/deny-secret-reads.sh"
@@ -12078,7 +12300,7 @@ V6S='{"command":"bash \"${CLAUDE_PROJECT_DIR}/hooks/pre-commit-test.sh\""}'   # 
 V6U='{"args":["-c",". \"$0\"","/home/u/.claude/hooks/no-push-main.sh"]}'    # the v4.6.1 user-level form (args path)
 v6hc() { env -i PATH="$PATH" bash -c '. "$1"; shift; eval "$1"; echo "rc=$?"' _ "$V6HC" "$1" 2>&1 | tr '\n' ' ' | sed 's/ $//'; }
 expect "v6 hook-class: no-push-main is machine/closed" "machine closed rc=0" "$(v6hc 'hc_class no-push-main && echo "$HC_CLS $HC_POL"')"
-expect "v6 hook-class: read-size-gate is project/warn" "project warn rc=0" "$(v6hc 'hc_class read-size-gate && echo "$HC_CLS $HC_POL"')"
+expect "v6 hook-class: enforce-delegation is project/warn" "project warn rc=0" "$(v6hc 'hc_class enforce-delegation && echo "$HC_CLS $HC_POL"')"
 expect "v6 hook-class: an unknown name returns 1" "rc=1" "$(v6hc 'hc_class no-such-hook')"
 expect "v6 hook-class: project-only hook, no manifest -> skip (0)" "rc=0" "$(v6hc "hc_skip pre-commit-test '$V6P' '' ''")"
 expect "v6 hook-class: machine hook, no manifest, no registration -> run (1)" "rc=1" "$(v6hc "hc_skip no-push-main '$V6P' '' ''")"
@@ -12092,12 +12314,150 @@ expect "v6 hook-class: user settings register another hook -> run (1)" "rc=1" "$
 expect "v6 hook-class: hc_skip on an unknown name returns 1" "rc=1" "$(v6hc "hc_skip no-such-hook '$V6P' '$V6S' '$V6U'")"
 # run-hook.sh without its lib refuses closed: the decision code is gone, so nothing may run
 V6RH="$TMPROOT/v6hc nolib"; mkdir -p "$V6RH"; cp "$ROOT/hooks/run-hook.sh" "$V6RH/"
-expect "v6 hook-class: run-hook.sh with hooks/lib/hook-class.sh missing -> exit 2 + message" "HOOK BLOCKED: run-hook.sh: hooks/lib/hook-class.sh missing -- reinstall the cct plugin rc=2" "$( ( export CLAUDE_PROJECT_DIR="$V6P"; printf '{}' | bash "$V6RH/run-hook.sh" no-push-main 2>&1; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//')"
+expect "v6 hook-class: run-hook.sh with hooks/lib/hook-class.sh missing -> exit 2 + message" "HOOK BLOCKED: run-hook.sh: hooks/lib/hook-class.sh missing -- reinstall the plugin that registers this hook rc=2" "$( ( export CLAUDE_PROJECT_DIR="$V6P"; printf '{}' | bash "$V6RH/run-hook.sh" no-push-main 2>&1; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//')"
 # ---- end v6.0 hook-class lib
+
+# ---- v7.0.0 cct-guards: the four cost and context guards run from plugins/cct-guards/hooks/ with the verdicts they had in cct
+echo "=== plugins/cct-guards (run-hook.sh, hook-class.sh, the four guards) ==="
+G7D="$ROOT/plugins/cct-guards/hooks"
+G7P="$TMPROOT/g7 proj"; mkdir -p "$G7P/.claude"; printf '{}' > "$G7P/.claude/template-manifest.json"   # a toolkit project: the project-class guards run
+G7HOME="$TMPROOT/g7home"; mkdir -p "$G7HOME/.claude"      # a bare HOME: no user-level registration to step aside for
+G7TMP="$TMPROOT/g7tmp"; mkdir -p "$G7TMP"
+g7out() { # <hook> <payload> [project] -> the hook's stdout, run through the plugin's own run-hook.sh
+  printf '%s' "$2" | env HOME="$G7HOME" TMPDIR="$G7TMP" CLAUDE_PROJECT_DIR="${3:-$G7P}" bash "$G7D/run-hook.sh" "$1" 2>/dev/null
+}
+g7err() { # <hook> <payload> [project] -> "<stderr> rc=<n>", newlines folded
+  ( printf '%s' "$2" | env HOME="$G7HOME" TMPDIR="$G7TMP" CLAUDE_PROJECT_DIR="${3:-$G7P}" bash "$G7D/run-hook.sh" "$1" 2>&1 1>/dev/null; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//'
+}
+G7ALL=1
+for g7f in hooks/read-size-gate.sh hooks/bash-output-guard.sh hooks/agent-budget-warn.sh hooks/post-edit-build.sh hooks/run-hook.sh hooks/hooks.json hooks/lib/json.sh hooks/lib/git-cmd.sh hooks/lib/hook-class.sh .claude-plugin/plugin.json; do
+  [ -s "$ROOT/plugins/cct-guards/$g7f" ] || { G7ALL=0; echo "  missing: plugins/cct-guards/$g7f"; }
+done
+expect "g7: the plugin ships the four guards, run-hook.sh, hooks.json, the three libs and its manifest" 1 "$G7ALL"
+G7LEFT=0
+for g7h in read-size-gate bash-output-guard agent-budget-warn post-edit-build; do
+  [ -e "$ROOT/hooks/$g7h.sh" ] && G7LEFT=$((G7LEFT + 1))
+  grep -q "run-hook.sh\\\\\" $g7h\"" "$ROOT/hooks/hooks.json" && G7LEFT=$((G7LEFT + 1))
+  env -i PATH="$PATH" bash -c '. "$1"; hc_class "$2"' _ "$ROOT/hooks/lib/hook-class.sh" "$g7h" >/dev/null 2>&1 && G7LEFT=$((G7LEFT + 1))
+done
+expect "g7: nothing of the four is left in cct (no script, no registration, no class-table line)" 0 "$G7LEFT"
+g7cls() { env -i PATH="$PATH" bash -c '. "$1"; hc_class "$2" && echo "$HC_CLS $HC_POL"' _ "$G7D/lib/hook-class.sh" "$1" 2>&1; }
+expect "g7: read-size-gate is project/warn in the plugin's table"  "project warn" "$(g7cls read-size-gate)"
+expect "g7: bash-output-guard is machine/open in the plugin's table" "machine open" "$(g7cls bash-output-guard)"
+expect "g7: agent-budget-warn is project/warn in the plugin's table" "project warn" "$(g7cls agent-budget-warn)"
+expect "g7: post-edit-build is project/open in the plugin's table"  "project open" "$(g7cls post-edit-build)"
+expect "g7: the plugin's table knows no cct hook (no-push-main -> unknown)" "" "$(g7cls no-push-main)"
+expect "g7: hooks.json registers exactly the four, each through run-hook.sh" "4 4" \
+  "$(grep -c 'run-hook.sh\\" ' "$ROOT/plugins/cct-guards/hooks/hooks.json" | tr -d ' ') $(grep -oE 'run-hook.sh\\" (read-size-gate|bash-output-guard|agent-budget-warn|post-edit-build)' "$ROOT/plugins/cct-guards/hooks/hooks.json" | sort -u | grep -c .)"
+
+# read-size-gate: an unbounded Read of a 600-line file is capped at 500 (updatedInput), through run-hook.sh
+G7BIG="$TMPROOT/g7big.txt"; : > "$G7BIG"; g7i=1; while [ "$g7i" -le 600 ]; do echo "line $g7i" >> "$G7BIG"; g7i=$((g7i + 1)); done
+if [ -n "$HAVE_NODE" ]; then
+  G7RSG=$(g7out read-size-gate "$(mkread "$G7BIG")")
+  expect "g7 read-size-gate: decision is allow, limit 500 (as in cct)" "allow 500" \
+    "$(jfield "$G7RSG" hookSpecificOutput.permissionDecision) $(jfield "$G7RSG" hookSpecificOutput.updatedInput.limit)"
+  G7NOM="$TMPROOT/g7nomanifest"; mkdir -p "$G7NOM/.claude"
+  expect "g7 read-size-gate: project class -> no toolkit project, no output" "" "$(g7out read-size-gate "$(mkread "$G7BIG")" "$G7NOM")"
+else
+  skip "g7 read-size-gate cap rows" "no node on this host" 2
+fi
+
+# bash-output-guard: machine class; 20 000 characters of stdout are cut and the full text goes to a log
+if [ -n "$HAVE_NODE" ]; then
+  G7BOG=$(g7out bash-output-guard "$(mkpost 20000)" "$G7NOM")
+  expect "g7 bash-output-guard: emits updatedToolOutput with the truncation marker" "PostToolUse 1" \
+    "$(jfield "$G7BOG" hookSpecificOutput.hookEventName) $(printf '%s' "$G7BOG" | grep -c 'chars truncated')"
+  expect "g7 bash-output-guard: 5 000 characters pass through untouched" "" "$(g7out bash-output-guard "$(mkpost 5000)" "$G7NOM")"
+else
+  skip "g7 bash-output-guard rows" "no node on this host" 2
+fi
+
+# agent-budget-warn: the 120th call of a spawn blocks (exit 2) except a commit
+g7bud() { # <command> -> "<stderr first word> rc=<n>" for call 120 of agent g7-agent
+  g7t="$TMPROOT/g7bud$g7n"; mkdir -p "$g7t/claude-agent-budget/g7sess"; printf '%s' 119 > "$g7t/claude-agent-budget/g7sess/g7-agent"
+  ( printf '{"session_id":"g7sess","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s","agent_id":"g7-agent"}\n' "$1" "$(jesc "$G7P")" \
+      | env HOME="$G7HOME" TMPDIR="$g7t" CLAUDE_PROJECT_DIR="$G7P" bash "$G7D/run-hook.sh" agent-budget-warn 2>&1 1>/dev/null; echo "rc=$?" ) | tr '\n' ' ' | sed 's/ $//' | grep -oE 'BUDGET: this spawn has made 120|rc=[0-9]+' | tr '\n' ' ' | sed 's/ $//'
+}
+g7n=1; expect "g7 agent-budget-warn: call 120 'git status' blocks" "BUDGET: this spawn has made 120 rc=2" "$(g7bud 'git status')"
+g7n=2; expect "g7 agent-budget-warn: call 120 'git commit -m x' passes (a commit may land)" "rc=0" "$(g7bud 'git commit -m x' | grep -o 'rc=0')"
+
+# post-edit-build: the declared command runs after an edit and its output reaches stderr; never blocks
+G7PEB="$TMPROOT/g7peb"; mkdir -p "$G7PEB/.claude"; printf '{}' > "$G7PEB/.claude/template-manifest.json"
+printf '# ctx\n\n- **Post-edit build**: `printf built-%%s ok`\n' > "$G7PEB/PROJECT_CONTEXT.md"
+G7EDIT=$(printf '{"session_id":"t","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"x"},"cwd":"%s","tool_response":{}}' "$(jesc "$G7PEB")")
+G7PEBO=$(g7err post-edit-build "$G7EDIT" "$G7PEB")
+expect "g7 post-edit-build: the Post-edit build command runs, output on stderr, exit 0" "1 rc=0" \
+  "$(printf '%s' "$G7PEBO" | grep -c 'built-ok') $(printf '%s' "$G7PEBO" | grep -o 'rc=[0-9]*')"
+
+# run-hook.sh copy: a missing warn-class script warns (exit 0) with the plugin-neutral reinstall text
+G7CP="$TMPROOT/g7copy"; mkdir -p "$G7CP"; cp -R "$G7D" "$G7CP/hooks"; rm -f "$G7CP/hooks/read-size-gate.sh"
+G7MISS=$( ( printf '{}' | env HOME="$G7HOME" CLAUDE_PROJECT_DIR="$G7P" bash "$G7CP/hooks/run-hook.sh" read-size-gate 2>&1; echo "rc=$?" ) | tr '\n' ' ')
+expect "g7 run-hook: a missing warn-class script -> WARN, neutral reinstall text, exit 0" "1 1 rc=0" \
+  "$(printf '%s' "$G7MISS" | grep -c '^WARN: ') $(printf '%s' "$G7MISS" | grep -c 'Reinstall the plugin that registers this hook') $(printf '%s' "$G7MISS" | grep -o 'rc=[0-9]*')"
+# ---- end v7.0.0 cct-guards
+
+# ---- v7.0.0 cct-learning: the retro ledger pair runs from plugins/cct-learning/hooks/ with the verdicts it had in cct
+echo "=== plugins/cct-learning (run-hook.sh, hook-class.sh, retro-ledger, retro-brief, retro-review) ==="
+L7D="$ROOT/plugins/cct-learning/hooks"
+L7P="$TMPROOT/l7 proj"; mkdir -p "$L7P/.claude"; printf '{}' > "$L7P/.claude/template-manifest.json"   # a toolkit project: the project-class hooks run
+L7NP="$TMPROOT/l7 noproj"; mkdir -p "$L7NP/.claude"                                                      # no manifest: they must stay silent
+L7HOME="$TMPROOT/l7home"; mkdir -p "$L7HOME/.claude"     # a bare HOME: no user-level registration to step aside for
+L7ALL=1
+for l7f in hooks/retro-ledger.sh hooks/retro-brief.sh hooks/run-hook.sh hooks/hooks.json hooks/lib/json.sh hooks/lib/hook-class.sh skills/retro-review/SKILL.md .claude-plugin/plugin.json; do
+  [ -s "$ROOT/plugins/cct-learning/$l7f" ] || { L7ALL=0; echo "  missing: plugins/cct-learning/$l7f"; }
+done
+expect "l7: the plugin ships both retro hooks, run-hook.sh, hooks.json, json.sh, hook-class.sh, the retro-review skill and its manifest" 1 "$L7ALL"
+L7LEFT=0
+for l7h in retro-ledger retro-brief; do
+  [ -e "$ROOT/hooks/$l7h.sh" ] && L7LEFT=$((L7LEFT + 1))
+  grep -q "run-hook.sh\\\\\" $l7h\"" "$ROOT/hooks/hooks.json" && L7LEFT=$((L7LEFT + 1))
+  env -i PATH="$PATH" bash -c '. "$1"; hc_class "$2"' _ "$ROOT/hooks/lib/hook-class.sh" "$l7h" >/dev/null 2>&1 && L7LEFT=$((L7LEFT + 1))
+done
+[ -e "$ROOT/skills/retro-review" ] && L7LEFT=$((L7LEFT + 1))
+expect "l7: nothing of the learning loop is left in cct (no script, registration, class-table line or skill)" 0 "$L7LEFT"
+l7cls() { env -i PATH="$PATH" bash -c '. "$1"; hc_class "$2" && echo "$HC_CLS $HC_POL"' _ "$L7D/lib/hook-class.sh" "$1" 2>&1; }
+expect "l7: retro-ledger is project/open in the plugin's table" "project open" "$(l7cls retro-ledger)"
+expect "l7: retro-brief is project/open in the plugin's table"  "project open" "$(l7cls retro-brief)"
+expect "l7: the plugin's table knows no cct hook (no-push-main -> unknown)" "" "$(l7cls no-push-main)"
+expect "l7: hooks.json registers exactly the two, each through run-hook.sh" "2 2" \
+  "$(grep -c 'run-hook.sh\\" ' "$ROOT/plugins/cct-learning/hooks/hooks.json" | tr -d ' ') $(grep -oE 'run-hook.sh\\" (retro-ledger|retro-brief)' "$ROOT/plugins/cct-learning/hooks/hooks.json" | sort -u | grep -c .)"
+expect "l7: retro-brief is a SessionStart hook and retro-ledger a SubagentStop hook" "1 1" \
+  "$(grep -c 'SessionStart' "$ROOT/plugins/cct-learning/hooks/hooks.json") $(grep -c 'SubagentStop' "$ROOT/plugins/cct-learning/hooks/hooks.json")"
+
+if [ -n "$HAVE_NODE" ]; then
+  # ledger then brief, through the plugin's own run-hook.sh, in a toolkit project
+  L7TR="$TMPROOT/l7-agent.jsonl"
+  {
+    trow_err "<tool_use_error>Error: No such tool available: mcp__x__y. mcp__x__y is disabled for this session, in subagents as well as here.</tool_use_error>"
+    trow_err "PreToolUse:Bash hook error: [bash 'hooks/enforce-delegation.sh']: DELEGATE: the PO does not do hands-on work."
+  } > "$L7TR"
+  L7CWD="G:/git/l7proj"; L7LED="$L7HOME/.claude/projects/G--git-l7proj/memory/retro.md"
+  mkstop "$L7CWD" coder agent-l7a "$L7TR" | env HOME="$L7HOME" CLAUDE_PROJECT_DIR="$L7P" bash "$L7D/run-hook.sh" retro-ledger >/dev/null 2>&1
+  expect "l7 retro-ledger: exits 0 and writes one row with the dead tool and the hook block" "0 1 1 1" \
+    "$? $(wc -l < "$L7LED" 2>/dev/null | tr -d ' ') $(grep -c 'dead=\[mcp__x__y\]' "$L7LED" 2>/dev/null) $(grep -c 'blocks=\[enforce-delegation.sh\]' "$L7LED" 2>/dev/null)"
+  L7BR=$(mkstart "$L7CWD" | env HOME="$L7HOME" CLAUDE_PROJECT_DIR="$L7P" bash "$L7D/run-hook.sh" retro-brief 2>/dev/null)
+  expect "l7 retro-brief: replays the row under the RETRO header" "1 1" \
+    "$(printf '%s' "$L7BR" | grep -c '^RETRO ') $(printf '%s' "$L7BR" | grep -c 'agent-l7a')"
+  # project class: outside a toolkit project both stay silent and write nothing
+  L7HOME2="$TMPROOT/l7home2"; mkdir -p "$L7HOME2/.claude"
+  mkstop "$L7CWD" coder agent-l7b "$L7TR" | env HOME="$L7HOME2" CLAUDE_PROJECT_DIR="$L7NP" bash "$L7D/run-hook.sh" retro-ledger >/dev/null 2>&1
+  expect "l7 retro-ledger: no toolkit project -> no ledger written" 0 "$(find "$L7HOME2" -name retro.md 2>/dev/null | wc -l | tr -d ' ')"
+  expect "l7 retro-brief: no toolkit project -> no output" "" "$(mkstart "$L7CWD" | env HOME="$L7HOME" CLAUDE_PROJECT_DIR="$L7NP" bash "$L7D/run-hook.sh" retro-brief 2>/dev/null)"
+  # fail-open: an unusable payload exits 0 through run-hook.sh
+  printf '%s' '{not json' | env HOME="$L7HOME2" CLAUDE_PROJECT_DIR="$L7P" bash "$L7D/run-hook.sh" retro-ledger >/dev/null 2>&1
+  expect "l7 retro-ledger: an unusable payload exits 0 (never blocks a stop)" 0 $?
+else
+  skip "l7 retro rows" "no node on this host" 6
+fi
+# an open-class hook whose script is gone is silent: exit 0, no output
+L7CP="$TMPROOT/l7copy"; mkdir -p "$L7CP"; cp -R "$L7D" "$L7CP/hooks" 2>/dev/null; rm -f "$L7CP/hooks/retro-brief.sh"
+L7MISS=$( ( printf '{}' | env HOME="$L7HOME" CLAUDE_PROJECT_DIR="$L7P" bash "$L7CP/hooks/run-hook.sh" retro-brief 2>&1; echo "rc=$?" ) | tr '\n' ' ')
+expect "l7 run-hook: a missing open-class script -> silent, exit 0" "rc=0 " "$L7MISS"
+# ---- end v7.0.0 cct-learning
 
 # ---- v6.0 Task 3: the guards take the dispatcher payload (CCTD_MEMO[1]) and find their libs without dirname
 if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
-  skip "v6 guards: payload-source rows" "no working node, python3 or jq on this host" 16
+  skip "v6 guards: payload-source rows" "no working node, python3 or jq on this host" 18
 else
   V6GR="$TMPROOT/v6g"; mkdir -p "$V6GR"
   V6G_MAIN=$(mkrepo v6gmain main)
@@ -12105,6 +12465,9 @@ else
   V6G_BAD=$(mkrepo v6gbad main)
   printf '# ctx\n\n- **Test**: `false`\n' > "$V6G_BAD/PROJECT_CONTEXT.md"
   printf '# ctx\n\n- **Gate**: `bash hooks/run-gate.sh`\n' > "$V6G_FEAT/PROJECT_CONTEXT.md"
+  printf 'body\n' > "$V6GR/body.md"
+  V6G_BIC=$(mkrepo v6gbic feature/z)
+  printf '# ctx\n\n- **Task source**: `plan-files`\n' > "$V6G_BIC/PROJECT_CONTEXT.md"
   V6G_BENIGN="$(mkjson Bash 'ls' "$V6GR")"
   V6G_NL=$'\n'
   # <guard> -> <deny payload>; <guard> -> <needle>. enforce-delegation denies the MAIN THREAD (no agent_id):
@@ -12113,6 +12476,7 @@ else
     case "$1" in
       no-push-main)       mkjson Bash 'git push origin main' "$V6G_MAIN" ;;
       gate-before-merge)  mkjson Bash 'gh pr merge 5 --squash' "$V6G_FEAT" ;;
+      backlog-item-check) mkjson Bash "gh pr create --base main --body-file $V6GR/body.md" "$V6G_BIC" ;;
       pre-commit-test)    mkjson Bash 'git commit -m "x"' "$V6G_BAD" ;;
       deny-hang-shapes)   mkjson Bash "cat > f.txt <<'EOF'${V6G_NL}body${V6G_NL}EOF" "$V6GR" ;;
       deny-secret-reads)  mkjson_read '.env' "$V6GR" ;;
@@ -12126,6 +12490,7 @@ else
       no-push-main)       echo '2:pushing to a protected branch' ;;
       deny-secret-reads)  echo '2:secrets files are not read' ;;
       gate-before-merge)  echo '2:No gate artifact found' ;;
+      backlog-item-check) echo '2:BLOCKED: backlog-item-check:' ;;
       pre-commit-test)    echo '2:failed' ;;
       deny-hang-shapes)   echo '2:a heredoc written into a file' ;;
       enforce-delegation) echo '0:"permissionDecision":"deny"' ;;
@@ -12135,7 +12500,7 @@ else
   v6g_a() { # <guard>
     printf '%s' "$V6G_BENIGN" | "$BASH" -c 'CCTD_MEMO=(0 "$1"); ( . "$2" ) 2>&1; echo "rc=$?"' _ "$(v6g_deny "$1")" "$ROOT/hooks/$1.sh"
   }
-  for g in no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation; do
+  for g in no-push-main deny-secret-reads gate-before-merge backlog-item-check pre-commit-test deny-hang-shapes enforce-delegation; do
     if [ "$g" = enforce-delegation ] && [ -z "$HAVE_NODE" ]; then skip "v6 guards: (a) $g" "enforce-delegation needs node" 1; continue; fi
     v6g_out="$(v6g_a "$g")"; v6g_w="$(v6g_want "$g")"
     v6g_got="$(printf '%s' "$v6g_out" | tail -n 1 | sed 's/^rc=//')"
@@ -12143,7 +12508,7 @@ else
     expect "v6 guards: (a) $g: the memo payload wins over a benign stdin" "${v6g_w%%:*}:has" "$v6g_got:$v6g_n"
   done
   # (b) an exported scalar CCTD_MEMO is ignored: the benign stdin is read, the guard allows
-  for g in no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation; do
+  for g in no-push-main deny-secret-reads gate-before-merge backlog-item-check pre-commit-test deny-hang-shapes enforce-delegation; do
     if [ "$g" = enforce-delegation ] && [ -z "$HAVE_NODE" ]; then skip "v6 guards: (b) $g" "enforce-delegation needs node" 1; continue; fi
     v6g_out="$(printf '%s' "$V6G_BENIGN" | env CCTD_MEMO="$(v6g_deny "$g")" bash "$ROOT/hooks/$g.sh" 2>&1; echo "rc=$?")"
     expect "v6 guards: (b) $g: an exported scalar CCTD_MEMO is ignored" "rc=0:no" "$(printf '%s' "$v6g_out" | tail -n 1):$(case "$v6g_out" in *'"deny"'*|*BLOCKED*) echo yes ;; *) echo no ;; esac)"
@@ -12168,7 +12533,7 @@ fi
 # hooks/ (so a stand-in guard can replace a real one) next to a project dir; the manifest makes the project a toolkit
 # project (the project-class guards run). Marker stand-ins append their own name to <tree>/ran.
 if ! have_backend node && ! have_backend python3 && ! have_backend jq; then
-  skip "v6 dispatch: rows" "no working node, python3 or jq on this host" 88
+  skip "v6 dispatch: rows" "no working node, python3 or jq on this host" 92
 else
   V6D="$TMPROOT/v6d"; mkdir -p "$V6D/home"
   v6d_mk() { # <tree> [m] -- a scratch tree; m = the project carries a template manifest
@@ -12220,10 +12585,10 @@ else
   expect "v6 dispatch: (b) powershell table has no deny-secret-reads: cat .env passes" "rc=0 needle=no" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "$V6D_ENV_NEEDLE")"
   v6d_run base bash "$V6D_LS"
   expect "v6 dispatch: (c) ls: rc 0 and empty stdout" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
-  # the same in a toolkit project, where all six guards run (design D4.4: none of them writes stdout on a plain call)
+  # the same in a toolkit project, where all seven guards run (design D4.4: none of them writes stdout on a plain call)
   v6d_mk basem m
   v6d_run basem bash "$V6D_LS"
-  expect "v6 dispatch: (c) a toolkit project, all six guards run: ls: rc 0 and empty stdout" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
+  expect "v6 dispatch: (c) a toolkit project, all seven guards run: ls: rc 0 and empty stdout" "rc=0 out=" "rc=$V6D_RC out=$V6D_OUT"
   v6d_run base nosuch "$V6D_LS"
   expect "v6 dispatch: (k) an unknown table: rc 2 + 'unknown table'" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" "unknown table 'nosuch'")"
   v6d_run base '' "$V6D_LS"
@@ -12456,7 +12821,7 @@ else
 
   # (m) Review Focus 3 / R-3: with the toolkit's REAL settings the dispatcher runs exactly the guards run-hook.sh runs.
   # Both sides use the same stand-ins; the project carries the real .claude/settings.json and a hooks/<name>.sh per guard.
-  v6d_guards='no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation'
+  v6d_guards='no-push-main deny-secret-reads gate-before-merge backlog-item-check pre-commit-test deny-hang-shapes enforce-delegation'
   for v6d_man in none m; do
     v6d_t="m$v6d_man"
     v6d_mk "$v6d_t" "$([ "$v6d_man" = m ] && echo m)"
@@ -12473,8 +12838,26 @@ else
     done
     [ -n "$v6d_r_set" ] || v6d_r_set=none
     expect "v6 dispatch: (m) the toolkit's real settings, manifest=$v6d_man: the dispatcher runs what run-hook.sh runs" "$v6d_r_set" "$v6d_d_set"
-    expect "v6 dispatch: (m) manifest=$v6d_man: the comparison is not vacuous (a guard ran, a guard stepped aside)" "yes" "$(case $v6d_d_set in none|'no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation') echo no ;; *) echo yes ;; esac)"
+    expect "v6 dispatch: (m) manifest=$v6d_man: the comparison is not vacuous (a guard ran, a guard stepped aside)" "yes" "$(case $v6d_d_set in none|'no-push-main deny-secret-reads gate-before-merge backlog-item-check pre-commit-test deny-hang-shapes enforce-delegation') echo no ;; *) echo yes ;; esac)"
   done
+
+  # (m) v6.3: backlog-item-check sits between gate-before-merge and pre-commit-test in both tables. The powershell order is
+  # read off stand-ins (the bash order is the (m) comparison above); then the real guard through each table: refused in a
+  # toolkit project, stepped aside in a plain one (project class).
+  v6d_mk psm m
+  for g in no-push-main gate-before-merge backlog-item-check pre-commit-test; do v6d_marker psm "$g"; done
+  v6d_run psm powershell "$V6D_LS"
+  expect "v6 dispatch: (m) powershell table order: backlog-item-check runs after gate-before-merge, before pre-commit-test" "no-push-main gate-before-merge backlog-item-check pre-commit-test" "$(v6d_ran psm)"
+  V6D_BIC=$(mkrepo v6dbic feature/z)
+  printf '# ctx\n\n- **Task source**: `plan-files`\n' > "$V6D_BIC/PROJECT_CONTEXT.md"
+  printf 'body\n' > "$V6D/body.md"
+  V6D_GHPR=$(mkjson Bash "gh pr create --base main --title t --body-file $V6D/body.md" "$V6D_BIC")
+  v6d_run basem bash "$V6D_GHPR"
+  expect "v6 dispatch: (m) a toolkit project, bash table: a gh pr create naming no item is refused by backlog-item-check" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" 'BLOCKED: backlog-item-check:')"
+  v6d_run basem powershell "$(mkjson PowerShell "gh pr create --base main --title t --body-file $V6D/body.md" "$V6D_BIC")"
+  expect "v6 dispatch: (m) a toolkit project, powershell table: the same refusal" "rc=2 needle=yes" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" 'BLOCKED: backlog-item-check:')"
+  v6d_run base bash "$V6D_GHPR"
+  expect "v6 dispatch: (m) no manifest (not a toolkit project): backlog-item-check steps aside, the gh pr create passes" "rc=0 needle=no" "rc=$V6D_RC needle=$(v6d_has "$V6D_ERR" 'backlog-item-check')"
 
   # (n) Review Focus 4: a Test that prints to stdout. The dispatcher's answer equals pre-commit-test's own, run alone.
   v6d_mk n m
@@ -12629,7 +13012,7 @@ V5GC="$(awk '/pol=closed/ { sub(/\).*/, ""); gsub(/\|/, " "); printf "%s ", $0 }
 V5GN=0
 # parser-free (the matrix hides node, python3 and jq): hooks.json has one `"command": "<escaped>"` entry per line;
 # V5RAW keeps the JSON-escaped value of every run-hook command, the loop unescapes it
-V5RAW="$(sed -n 's/.*"command": "\(.*[^\\]\)"\(, "timeout": [0-9]*\)\{0,1\} }.*/\1/p' "$ROOT/hooks/hooks.json" | grep 'run-hook\.sh')"
+V5RAW="$(sed -n 's/.*"command": "\(.*[^\\]\)"\(, "timeout": [0-9]*\)\{0,1\} }.*/\1/p' "$ROOT/hooks/hooks.json" "$ROOT"/plugins/*/hooks/hooks.json | grep 'run-hook\.sh')"   # v7.0.0: the optional plugins' registrations too
 while IFS= read -r v5g_cmd; do
   [ -n "$v5g_cmd" ] || continue
   v5g_name="${v5g_cmd##* }"; V5GN=$((V5GN + 1))
@@ -12735,6 +13118,41 @@ else
   skip "v5 agents: enforce-agent-contract cct: cases" "no node on this host" 7
 fi
 # ---- end v5.0 agents
+# ---- v7.0.0 agent type table: hooks/lib/agent-model.sh resolves the core types and the four language plugins' coders
+# from ONE fixed table, consulted before any agent file is read. The plugin root below has no agents/ at all, so a
+# row that answers proves the table, not a file. Check 87 pins every row against its agent file's frontmatter.
+V7R="$TMPROOT/v7root"; mkdir -p "$V7R/hooks/lib" "$TMPROOT/v7home" "$TMPROOT/v7noproj"
+v7am() ( export HOME="$TMPROOT/v7home" CLAUDE_PLUGIN_ROOT="$V7R"; . "$ROOT/hooks/lib/agent-model.sh"; am_resolve "$1" "$TMPROOT/v7noproj"; printf '%s|%s|%s|%s' "$AM_KIND" "$AM_MODEL" "$AM_EFFORT" "${AM_PIPELINE:-}" )
+expect "v7 table: dotnet-tools:dotnet-coder -> own sonnet medium, pipeline true" "own|sonnet|medium|true" "$(v7am dotnet-tools:dotnet-coder)"
+expect "v7 table: python-tools:python-coder"  "own|sonnet|medium|true" "$(v7am python-tools:python-coder)"
+expect "v7 table: rust-tools:rust-coder"      "own|sonnet|medium|true" "$(v7am rust-tools:rust-coder)"
+expect "v7 table: java-tools:java-coder"      "own|sonnet|medium|true" "$(v7am java-tools:java-coder)"
+expect "v7 table: cct:coder resolves with no agent file"     "own|sonnet|medium|true"   "$(v7am cct:coder)"
+expect "v7 table: cct:code-reviewer"          "own|opus|xhigh|true"    "$(v7am cct:code-reviewer)"
+expect "v7 table: cct:tester (pipeline notify)" "own|sonnet|medium|notify" "$(v7am cct:tester)"
+expect "v7 table: cct:architect"              "own|opus|xhigh|notify"  "$(v7am cct:architect)"
+expect "v7 table: cct:Explore (no pipeline)"  "own|haiku|low|"         "$(v7am cct:Explore)"
+expect "v7 table: cct:ops (no pipeline)"      "own|sonnet|medium|"     "$(v7am cct:ops)"
+expect "v7 table: an unknown foo-tools:foo-coder changes nothing" "none|||"  "$(v7am foo-tools:foo-coder)"
+expect "v7 table: another agent of a language plugin is not a row" "none|||" "$(v7am dotnet-tools:other-agent)"
+expect "v7 table: cct:nobody with no agents/ -> none" "none|||" "$(v7am cct:nobody)"
+expect "v7 table: a bare coder is not a row" "none|||" "$(v7am coder)"
+expect "v7 table: the CLI line for dotnet-tools:dotnet-coder" "own sonnet 0 medium" "$(HOME="$TMPROOT/v7home" CLAUDE_PLUGIN_ROOT="$V7R" bash "$ROOT/hooks/lib/agent-model.sh" dotnet-tools:dotnet-coder "$TMPROOT/v7noproj" | cut -d' ' -f1-4)"
+expect "v7 table: the CLI line for cct:coder (Jev reads it)" "own sonnet 0 medium" "$(HOME="$TMPROOT/v7home" CLAUDE_PLUGIN_ROOT="$V7R" bash "$ROOT/hooks/lib/agent-model.sh" cct:coder "$TMPROOT/v7noproj" | cut -d' ' -f1-4)"
+expect "v7 table: CLAUDE_CODE_SUBAGENT_MODEL_FORCE still wins over a row" "env|opus||" "$(CLAUDE_CODE_SUBAGENT_MODEL=opus CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 v7am dotnet-tools:dotnet-coder)"
+if [ -n "$HAVE_NODE" ]; then
+  # v5ctr/V5BAD come from the v5.0 agents block above (a fresh agent id per call, CLAUDE_PLUGIN_ROOT=$V5A)
+  expect "v7 table: dotnet-tools:dotnet-coder report without contract lines -> contract blocks" "rc=2" "$(v5ctr dotnet-tools:dotnet-coder "$V5BAD")"
+  expect "v7 table: python-tools:python-coder bad report -> blocks"  "rc=2" "$(v5ctr python-tools:python-coder "$V5BAD")"
+  expect "v7 table: rust-tools:rust-coder bad report -> blocks"      "rc=2" "$(v5ctr rust-tools:rust-coder "$V5BAD")"
+  expect "v7 table: java-tools:java-coder bad report -> blocks"      "rc=2" "$(v5ctr java-tools:java-coder "$V5BAD")"
+  expect "v7 table: a language coder with a compliant report passes" "rc=0" "$(v5ctr dotnet-tools:dotnet-coder "$CT_STR")"
+  expect "v7 table: unknown foo-tools:foo-coder passes (no row)"     "rc=0" "$(v5ctr foo-tools:foo-coder "$V5BAD")"
+  expect "v7 table: another dotnet-tools agent passes (no row)"      "rc=0" "$(v5ctr dotnet-tools:other-agent "$V5BAD")"
+else
+  skip "v7 table: enforce-agent-contract plugin-coder cases" "no node on this host" 7
+fi
+# ---- end v7.0.0 agent type table
 # ---- v5.0 cct-gate: same artifact as run-gate.sh; gc_gate_cmd names the right command (spec §3.4, §5)
 V5G=$(mkrepo v5gate main)
 printf '# ctx\n\n- **Gate**: `true`\n' > "$V5G/PROJECT_CONTEXT.md"
@@ -12784,9 +13202,9 @@ expect "v5 red gate via run-gate.sh names the in-repo command" yes "$(printf '%s
 # Needs python3 (am_jev_routing probes it and the router is python): skipped by name in the jq-only configuration.
 if python3 -c '' >/dev/null 2>&1; then
   V5J="$TMPROOT/v5jev plug"; mkdir -p "$V5J/hooks/lib" "$V5J/skills/jev" "$V5J/.claude-plugin"   # a space in the path on purpose
-  cp "$ROOT/hooks/run-hook.sh" "$ROOT/hooks/jev-route.sh" "$ROOT/hooks/jev-notice.sh" "$V5J/hooks/" 2>/dev/null
-  cp "$ROOT"/hooks/lib/*.sh "$V5J/hooks/lib/"
-  printf '{"name":"cct"}\n' > "$V5J/.claude-plugin/plugin.json"
+  cp "$ROOT/plugins/cct-jev/hooks/run-hook.sh" "$ROOT/plugins/cct-jev/hooks/jev-route.sh" "$ROOT/plugins/cct-jev/hooks/jev-notice.sh" "$V5J/hooks/" 2>/dev/null
+  cp "$ROOT"/plugins/cct-jev/hooks/lib/*.sh "$V5J/hooks/lib/"
+  printf '{"name":"cct-jev"}\n' > "$V5J/.claude-plugin/plugin.json"
   printf 'import sys\nsys.stdin.read()\nprint("ROUTED")\n' > "$V5J/skills/jev/jev_route.py"   # a fake router: proves it was exec'd with stdin
   V5JR=$(mkrepo v5jevrepo main); V5JH="$TMPROOT/v5jevhome"; mkdir -p "$V5JH" "$V5JR/.claude"
   V5JGD=$(git -C "$V5JR" rev-parse --path-format=absolute --git-common-dir)
@@ -12801,7 +13219,7 @@ if python3 -c '' >/dev/null 2>&1; then
   printf '{"route": true}\n' > "$V5JGD/jev/config.json"
   expect "v5 jev: route true -> the router runs, with stdin" "ROUTED rc=0" "$(v5jev jev-route)"
   expect "v5 jev: route true -> jev-notice prints the notice" "yes rc=0" "$(v5jev jev-notice | grep -q 'omit model on Agent spawns' && echo yes) rc=0"
-  expect "v5 jev: the notice names the plugin command" "yes" "$(v5jev jev-notice | grep -q '/cct:jev off' && echo yes)"
+  expect "v5 jev: the notice names the cct-jev command" "yes" "$(v5jev jev-notice | grep -q '/cct-jev:jev off' && echo yes)"
   printf '{"hooks":{"PreToolUse":[{"matcher":"Agent","hooks":[{"type":"command","command":"f=\\"$HOME/.claude/skills/jev/jev_route.py\\"; [ -f \\"$f\\" ] && python3 \\"$f\\"; exit 0"}]}]}}\n' > "$V5JR/.claude/settings.local.json"
   expect "v5 jev: route true + v4 settings.local.json entry -> jev-route steps aside" "rc=0" "$(v5jev jev-route)"
   expect "v5 jev: route true + v4 entry -> jev-notice steps aside" "rc=0" "$(v5jev jev-notice)"
@@ -12812,11 +13230,12 @@ if python3 -c '' >/dev/null 2>&1; then
   rm "$V5J/skills/jev/jev_route.py"
   expect "v5 jev: plugin router missing -> routing off (the floor applies)" "off" "$(v5jam)"
   rm -rf "$V5JGD/jev"
-  # I2: a plugin-SHAPED checkout (this toolkit repo: plugin.json + skills/jev/jev_route.py at its root, project model-floor
-  # registered) steps model-floor aside only while the plugin is LOADED in the session (the cct-session marker); exactly ONE emitter.
+  # I2: model-floor (the cct plugin's, here registered at the root of a checkout that also holds a router) steps aside only
+  # while the cct-jev plugin is LOADED in the session -- its OWN marker, written by plugins/cct-jev/hooks/cct-jev-session.sh into
+  # cct-jev-<uid>/, never the cct-session marker; exactly ONE emitter. The jev-route copy comes from the plugin.
   V5T=$(mkrepo v5tk main); V5TH="$TMPROOT/v5tkhome"; V5TT="$TMPROOT/v5tktmp"; V5TSID="v5tk-sid-1"
-  mkdir -p "$V5T/hooks/lib" "$V5T/skills/jev" "$V5T/.claude-plugin" "$V5TH" "$V5TT/cct-$(id -u)"
-  cp "$ROOT/hooks/model-floor.sh" "$ROOT/hooks/jev-route.sh" "$V5T/hooks/"; cp "$ROOT"/hooks/lib/*.sh "$V5T/hooks/lib/"
+  mkdir -p "$V5T/hooks/lib" "$V5T/skills/jev" "$V5T/.claude-plugin" "$V5TH" "$V5TT"
+  cp "$ROOT/hooks/model-floor.sh" "$V5T/hooks/"; cp "$ROOT/plugins/cct-jev/hooks/jev-route.sh" "$V5T/hooks/"; cp "$ROOT"/hooks/lib/*.sh "$V5T/hooks/lib/"
   printf '{"name":"cct"}\n' > "$V5T/.claude-plugin/plugin.json"
   printf 'import sys\nsys.stdin.read()\nprint("ROUTED")\n' > "$V5T/skills/jev/jev_route.py"   # stub router
   V5TGD=$(git -C "$V5T" rev-parse --path-format=absolute --git-common-dir); mkdir -p "$V5TGD/jev"
@@ -12824,7 +13243,8 @@ if python3 -c '' >/dev/null 2>&1; then
     local sj=""; [ -n "$1" ] && sj="\"session_id\":\"$1\","
     printf '{%s"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"p"},"cwd":"%s"}' "$sj" "$(jesc "$(natpath "${2:-$V5T}")")"
   }
-  v5t_mark() { printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$1" | TMPDIR="$V5TT" bash "$ROOT/hooks/cct-session.sh"; }   # the real writer
+  v5t_mark() { printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$1" | TMPDIR="$V5TT" bash "$ROOT/plugins/cct-jev/hooks/cct-jev-session.sh"; }   # the real cct-jev writer
+  v5t_cctmark() { printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$1" | TMPDIR="$V5TT" bash "$ROOT/hooks/cct-session.sh"; }   # the real cct writer: the OTHER marker
   v5t_mf() { # <session id> -> the model the PROJECT model-floor emits ("silent" when it steps aside); no plugin env: the lib falls back to the repo root
     v5t_payload "$1" | env -u CLAUDE_PLUGIN_ROOT HOME="$V5TH" TMPDIR="$V5TT" CLAUDE_PROJECT_DIR="$V5T" bash "$V5T/hooks/model-floor.sh" >"$TMPROOT/v5t.out" 2>/dev/null
     if [ -s "$TMPROOT/v5t.out" ]; then jfield "$(<"$TMPROOT/v5t.out")" hookSpecificOutput.updatedInput.model; else echo silent; fi
@@ -12839,30 +13259,41 @@ if python3 -c '' >/dev/null 2>&1; then
   expect "v5 jev (a) ... and jev-route emits (one emitter)" ROUTED "$(v5t_jr "$V5TSID")"
   expect "v5 jev (b) toolkit repo, plugin NOT loaded (no marker): project model-floor floors" sonnet "$(v5t_mf "v5tk-sid-unmarked")"
   expect "v5 jev (b) ... no session_id in the payload -> floors" sonnet "$(v5t_mf "")"
-  : > "$V5TT/cct-$(id -u)/a.b"
+  v5t_cctmark "v5tk-sid-cct"
+  expect "v5 jev (b2) route true with ONLY the cct marker (cct-session.sh wrote it, cct-jev did not): model-floor floors" sonnet "$(v5t_mf "v5tk-sid-cct")"
+  v5t_mark "v5tk-sid-cct"
+  expect "v5 jev (b3) ... then the cct-jev marker is written for the same session: it steps aside" silent "$(v5t_mf "v5tk-sid-cct")"
+  mkdir -p "$V5TT/cct-jev-$(id -u)"; : > "$V5TT/cct-jev-$(id -u)/a.b"
   expect "v5 jev (b) ... an unsafe session id (a dot) is treated as not loaded, even with a file of that name" sonnet "$(v5t_mf "a.b")"
   printf '{"route": false}\n' > "$V5TGD/jev/config.json"
   expect "v5 jev (d) route false, plugin loaded: model-floor floors" sonnet "$(v5t_mf "$V5TSID")"
   expect "v5 jev (d) ... and jev-route is silent (one emitter)" silent "$(v5t_jr "$V5TSID")"
   # SessionEnd removes the marker: a resumed session without the plugin floors again
   printf '{"route": true}\n' > "$V5TGD/jev/config.json"
-  printf '{"session_id":"%s","hook_event_name":"SessionEnd"}' "$V5TSID" | TMPDIR="$V5TT" bash "$ROOT/hooks/cct-session.sh" end
+  printf '{"session_id":"%s","hook_event_name":"SessionEnd"}' "$V5TSID" | TMPDIR="$V5TT" bash "$ROOT/plugins/cct-jev/hooks/cct-jev-session.sh" end
   expect "v5 jev (a') after SessionEnd the marker is gone: project model-floor floors again" sonnet "$(v5t_mf "$V5TSID")"
-  # (c) a v5 CONSUMER: manifest present, no project model-floor registration; the plugin's own model-floor, through run-hook
+  # (c) a v5 CONSUMER: manifest present, no project model-floor registration; the cct plugin's own model-floor through ITS
+  # run-hook (a cct-shaped fixture: no skills/jev, so the step-aside cannot lean on a router file in the cct root), and the
+  # cct-jev plugin's jev-route through ITS run-hook (V5J)
   V5C=$(mkrepo v5cons main); mkdir -p "$V5C/.claude"; printf '{}\n' > "$V5C/.claude/template-manifest.json"
-  cp "$ROOT/hooks/model-floor.sh" "$V5J/hooks/"
+  V5CT="$TMPROOT/v5cct plug"; mkdir -p "$V5CT/hooks/lib" "$V5CT/.claude-plugin"
+  cp "$ROOT/hooks/run-hook.sh" "$ROOT/hooks/model-floor.sh" "$V5CT/hooks/"; cp "$ROOT"/hooks/lib/*.sh "$V5CT/hooks/lib/"
+  printf '{"name":"cct"}\n' > "$V5CT/.claude-plugin/plugin.json"
   printf 'import sys\nsys.stdin.read()\nprint("ROUTED")\n' > "$V5J/skills/jev/jev_route.py"
   V5CGD=$(git -C "$V5C" rev-parse --path-format=absolute --git-common-dir); mkdir -p "$V5CGD/jev"; printf '{"route": true}\n' > "$V5CGD/jev/config.json"
-  v5c_run() { # <hook name> <session id> -> the plugin hook's stdout, via run-hook.sh
-    v5t_payload "$2" "$V5C" | env HOME="$V5TH" TMPDIR="$V5TT" CLAUDE_PLUGIN_ROOT="$V5J" CLAUDE_PROJECT_DIR="$V5C" bash "$V5J/hooks/run-hook.sh" "$1" 2>/dev/null
+  v5c_run() { # <hook name> <session id> -> the hook's stdout, via run-hook.sh of the plugin that owns it (jev-route: cct-jev; model-floor: cct)
+    local pl=$V5CT; [ "$1" = jev-route ] && pl=$V5J
+    v5t_payload "$2" "$V5C" | env HOME="$V5TH" TMPDIR="$V5TT" CLAUDE_PLUGIN_ROOT="$pl" CLAUDE_PROJECT_DIR="$V5C" bash "$pl/hooks/run-hook.sh" "$1" 2>/dev/null
   }
   v5c_model() { local o; o=$(v5c_run model-floor "$1"); if [ -n "$o" ]; then jfield "$o" hookSpecificOutput.updatedInput.model; else echo silent; fi; }
   v5t_mark "v5c-sid-1"
-  expect "v5 jev (c) consumer, plugin loaded, route true: the plugin's model-floor steps aside" silent "$(v5c_model v5c-sid-1)"
-  expect "v5 jev (c) ... and jev-route emits (one emitter)" ROUTED "$(v5c_run jev-route v5c-sid-1)"
-  expect "v5 jev (c) ... no marker for the session: the plugin's model-floor floors" sonnet "$(v5c_model v5c-sid-unmarked)"
+  expect "v5 jev (c) consumer, cct-jev marker set, route true: the cct plugin's model-floor steps aside (no router file in the cct root)" silent "$(v5c_model v5c-sid-1)"
+  expect "v5 jev (c) ... and cct-jev's jev-route emits (one emitter)" ROUTED "$(v5c_run jev-route v5c-sid-1)"
+  expect "v5 jev (c) ... no marker for the session: the cct plugin's model-floor floors" sonnet "$(v5c_model v5c-sid-unmarked)"
+  v5t_cctmark "v5c-sid-cctonly"
+  expect "v5 jev (c) ... only the cct marker for the session: the cct plugin's model-floor floors" sonnet "$(v5c_model v5c-sid-cctonly)"
 else
-  skip "v5 jev: plugin Jev registration fixtures" "no python3 on this host" 21
+  skip "v5 jev: plugin Jev registration fixtures" "no python3 on this host" 25
 fi
 # ---- end v5.0 jev
 
@@ -12912,9 +13343,10 @@ expect "v5 guard: ... another session id is still refused" "rc=2" "$(v5guardw '{
 printf '{"session_id":"wr-1","hook_event_name":"SessionEnd"}' | TMPDIR="$V5GW" bash "$ROOT/hooks/cct-session.sh" end
 expect "v5 guard: after cct-session.sh SessionEnd -> refused" "rc=2" "$(v5guardw '{"session_id":"wr-1","tool_name":"Edit"}')"
 # ownership (controller ruling 2): a cct-<uid> dir this user does not own is no marker dir, for the guard, the
-# writer and am_plugin_loaded alike. Git Bash/Cygwin skip the -O test (per-user /tmp; its -O risks a lockout).
+# writer alike, and a cct-jev-<uid> dir likewise for its writer and am_jev_loaded. Git Bash/Cygwin skip the -O test
+# (per-user /tmp; its -O risks a lockout).
 case "$(uname -s 2>/dev/null)" in
-  MINGW*|MSYS*|CYGWIN*) skip_host "v5 guard: a foreign-owned marker dir is refused (guard, writer, am_plugin_loaded)" "the -O test is skipped on Git Bash/Cygwin by design" 4 ;;
+  MINGW*|MSYS*|CYGWIN*) skip_host "v5 guard: a foreign-owned marker dir is refused (guard, writers, am_jev_loaded)" "the -O test is skipped on Git Bash/Cygwin by design" 5 ;;
   *)
     V5GF="$TMPROOT/v5guardf"; V5GFD="$V5GF/cct-$(id -u)"; mkdir -p "$V5GF"
     if [ "$(id -u)" = 0 ]; then
@@ -12927,7 +13359,17 @@ case "$(uname -s 2>/dev/null)" in
     expect "v5 guard: ... the same file in an owned dir -> allowed (control)" "rc=0" "$(mkdir -p "$TMPROOT/v5guardo/cct-$(id -u)"; : > "$TMPROOT/v5guardo/cct-$(id -u)/$V5GFS"; printf '{"session_id":"%s"}' "$V5GFS" | TMPDIR="$TMPROOT/v5guardo" bash -c "$V5GC" 2>/dev/null; echo "rc=$?")"
     printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$V5GFW" | TMPDIR="$V5GF" bash "$ROOT/hooks/cct-session.sh" 2>/dev/null
     expect "v5 session: foreign-owned marker dir -> writes nothing" "no" "$([ -e "$V5GFD/$V5GFW" ] && echo yes || echo no)"
-    expect "v5 am_plugin_loaded: foreign-owned marker dir -> not loaded" "no" "$( ( . "$ROOT/hooks/lib/agent-model.sh"; TMPDIR="$V5GF"; am_plugin_loaded "$V5GFS" && echo yes || echo no ) )"
+    # cct-jev's marker dir: the same ownership rule for its writer and for am_jev_loaded (the floor's reader)
+    V5GJD="$V5GF/cct-jev-$(id -u)"
+    if [ "$(id -u)" = 0 ]; then
+      mkdir -p "$V5GJD"; : > "$V5GJD/fo-1"; chown 65534 "$V5GJD"
+    else
+      ln -s /var/tmp "$V5GJD"; : > "/var/tmp/$V5GFS"
+    fi
+    expect "v5 am_jev_loaded: foreign-owned cct-jev marker dir -> not loaded" "no" "$( ( . "$ROOT/hooks/lib/agent-model.sh"; TMPDIR="$V5GF"; am_jev_loaded "$V5GFS" && echo yes || echo no ) )"
+    printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$V5GFW" | TMPDIR="$V5GF" bash "$ROOT/plugins/cct-jev/hooks/cct-jev-session.sh" 2>/dev/null
+    expect "v5 cct-jev session: foreign-owned marker dir -> writes nothing" "no" "$([ -e "$V5GJD/$V5GFW" ] && echo yes || echo no)"
+    [ -L "$V5GJD" ] && rm -f "/var/tmp/$V5GFS" "/var/tmp/$V5GFW"
     [ -L "$V5GFD" ] && rm -f "/var/tmp/$V5GFS" "/var/tmp/$V5GFW"
     ;;
 esac
@@ -12939,6 +13381,61 @@ else
   skip_host "v5 session: the sweep keeps a 29-day-old marker, removes a 31-day-old one" "no GNU touch -d on this host" 1
 fi
 # ---- end v5.0 guard
+
+# ---- v7.0.0 cct-jev: its OWN session marker (never the template guard's), the pinned agent-model.sh, the registration
+# Jev moved out of cct into plugins/cct-jev/. The floor (cct's model-floor) steps aside only while the clone's switch says
+# route:true AND this session carries the cct-jev marker, written by the plugin's own SessionStart hook into
+# ${TMPDIR:-/tmp}/cct-jev-<uid>/<session id>. That folder is NOT cct-<uid>/, the one the project's template guard reads, so
+# a cct-jev marker can never satisfy the guard (Review Focus 1), and the cct-session marker can never switch the floor off.
+echo "=== cct-jev plugin: marker, template guard, pinned agent-model.sh (v7.0.0) ==="
+JVP="$ROOT/plugins/cct-jev"
+JVT="$TMPROOT/jvmarker"; JVD="$JVT/cct-jev-$(id -u)"; mkdir -p "$JVT"
+jvw() { printf '%s' "$1" | TMPDIR="$JVT" bash "$JVP/hooks/cct-jev-session.sh" ${2:+"$2"}; echo "rc=$?"; }
+expect "cct-jev session: SessionStart writes the marker into cct-jev-<uid>/, not cct-<uid>/" "rc=0 yes no" "$(jvw '{"session_id":"jv-1","hook_event_name":"SessionStart"}') $([ -f "$JVD/jv-1" ] && echo yes || echo no) $([ -e "$JVT/cct-$(id -u)/jv-1" ] && echo yes || echo no)"
+expect "cct-jev session: no session id writes nothing" "rc=0 1" "$(jvw '{}') $(ls "$JVD" | wc -l | tr -d ' ')"
+expect "cct-jev session: an unsafe id (dot, traversal) writes nothing" "rc=0 rc=0 1" "$(jvw '{"session_id":"a.b"}') $(jvw '{"session_id":"../x"}') $(ls "$JVD" | wc -l | tr -d ' ')"
+expect "cct-jev session: an unknown argument neither creates nor removes a marker" "no yes" "$(printf '{"session_id":"jv-2"}' | TMPDIR="$JVT" bash "$JVP/hooks/cct-jev-session.sh" ed; printf '{"session_id":"jv-1"}' | TMPDIR="$JVT" bash "$JVP/hooks/cct-jev-session.sh" ed; [ -f "$JVD/jv-2" ] && echo yes || echo no) $([ -f "$JVD/jv-1" ] && echo yes || echo no)"
+expect "cct-jev session end: removes the marker" "rc=0 gone" "$(jvw '{"session_id":"jv-1","hook_event_name":"SessionEnd"}' end) $([ -f "$JVD/jv-1" ] && echo present || echo gone)"
+expect "cct-jev session: start, end, start leaves a marker" "yes" "$(jvw '{"session_id":"jv-3"}' >/dev/null; jvw '{"session_id":"jv-3"}' end >/dev/null; jvw '{"session_id":"jv-3"}' >/dev/null; [ -f "$JVD/jv-3" ] && echo yes || echo no)"
+if touch -d '29 days ago' "$JVD/old-29" 2>/dev/null && touch -d '31 days ago' "$JVD/old-31" 2>/dev/null; then
+  jvw '{"session_id":"jv-4"}' >/dev/null
+  expect "cct-jev session: the sweep keeps a 29-day-old marker, removes a 31-day-old one" "yes no" "$([ -f "$JVD/old-29" ] && echo yes || echo no) $([ -f "$JVD/old-31" ] && echo yes || echo no)"
+else
+  skip_host "cct-jev session: the sweep keeps a 29-day-old marker, removes a 31-day-old one" "no GNU touch -d on this host" 1
+fi
+# Review Focus 1: with ONLY the cct-jev marker (jv-3 above) and no cct marker, the template guard (the project's inline
+# PreToolUse command, extracted from the template as v5guard does) refuses, under bash and POSIX sh; with the cct-session
+# marker for the same id it allows (the control that proves the row can go green).
+jvg() { printf '%s' "$2" | TMPDIR="$JVT" "$1" -c "$V5GC" 2>/dev/null; echo "rc=$?"; }
+for jvsh in bash sh; do
+  expect "cct-jev guard [$jvsh]: ONLY the cct-jev marker, no cct marker -> the template guard refuses" "rc=2" "$(jvg "$jvsh" '{"session_id":"jv-3","tool_name":"Bash"}')"
+done
+printf '{"session_id":"jv-3","hook_event_name":"SessionStart"}' | TMPDIR="$JVT" bash "$ROOT/hooks/cct-session.sh"
+for jvsh in bash sh; do
+  expect "cct-jev guard [$jvsh]: control, the cct-session marker for the same id -> the template guard allows" "rc=0" "$(jvg "$jvsh" '{"session_id":"jv-3","tool_name":"Bash"}')"
+done
+rm -f "$JVT/cct-$(id -u)/jv-3"
+expect "cct-jev guard: the cct-session marker removed again -> refused once more (the cct-jev marker alone never opens it)" "rc=2" "$(jvg bash '{"session_id":"jv-3","tool_name":"Bash"}')"
+# Review Focus 2: cct-jev's pinned copy of agent-model.sh has no agents/ beside it, so cct:coder resolves from the agent
+# type table alone; and the pinned copy is byte-identical to cct's (check 88 holds that per release).
+JVE="$TMPROOT/jvnoproj"; mkdir -p "$JVE" "$TMPROOT/jvhome"
+expect "cct-jev's agent-model.sh: cct:coder resolves to own sonnet (CLAUDE_PLUGIN_ROOT unset)" "own sonnet 0 medium" "$(env -u CLAUDE_PLUGIN_ROOT HOME="$TMPROOT/jvhome" bash "$JVP/hooks/lib/agent-model.sh" cct:coder "$JVE" | cut -d' ' -f1-4)"
+expect "cct-jev's agent-model.sh: cct:coder resolves to own sonnet (CLAUDE_PLUGIN_ROOT = the plugin)" "own sonnet 0 medium" "$(HOME="$TMPROOT/jvhome" CLAUDE_PLUGIN_ROOT="$JVP" bash "$JVP/hooks/lib/agent-model.sh" cct:coder "$JVE" | cut -d' ' -f1-4)"
+expect "cct-jev's agent-model.sh: dotnet-tools:dotnet-coder resolves to own sonnet (the table's plugin rows)" "own sonnet 0 medium" "$(HOME="$TMPROOT/jvhome" CLAUDE_PLUGIN_ROOT="$JVP" bash "$JVP/hooks/lib/agent-model.sh" dotnet-tools:dotnet-coder "$JVE" | cut -d' ' -f1-4)"
+expect "cct-jev's agent-model.sh equals cct's, byte for byte" "same" "$(cmp -s "$JVP/hooks/lib/agent-model.sh" "$ROOT/hooks/lib/agent-model.sh" && echo same || echo differs)"
+# the session-id branch asks only the marker: cct's root holds no router, yet a marked session steps aside; an unmarked one never does.
+# (am_jev_routing also needs python3, the registration's runtime: without it the answer is off either way.)
+JVM="$TMPROOT/jvmf"; mkdir -p "$JVM"; JVR=$(mkrepo jvrepo main); JVGD=$(git -C "$JVR" rev-parse --path-format=absolute --git-common-dir)
+mkdir -p "$JVGD/jev"; printf '{"route": true}\n' > "$JVGD/jev/config.json"
+jvr() { ( export HOME="$TMPROOT/jvhome" CLAUDE_PLUGIN_ROOT="$ROOT" TMPDIR="$JVM"; . "$ROOT/hooks/lib/agent-model.sh"; am_jev_routing "$JVR" "$1" && echo on || echo off ); }
+JVON=on; python3 -c '' >/dev/null 2>&1 || JVON=off
+expect "am_jev_routing with a session id: route true, no cct-jev marker -> off (the floor applies)" "off" "$(jvr jvmf-sid)"
+printf '{"session_id":"jvmf-sid"}' | TMPDIR="$JVM" bash "$JVP/hooks/cct-jev-session.sh"
+expect "am_jev_routing with a session id: route true + the cct-jev marker, no router file in cct's root -> on" "$JVON" "$(jvr jvmf-sid)"
+printf '{"session_id":"jvmf-sid"}' | TMPDIR="$JVM" bash "$JVP/hooks/cct-jev-session.sh" end
+expect "am_jev_routing with a session id: ... after SessionEnd -> off again" "off" "$(jvr jvmf-sid)"
+rm -rf "$JVGD/jev"
+# ---- end v7.0.0 cct-jev
 
 
 # ---- v4.6.2 run-gate cwd warning: a run-gate.sh that lives in one checkout but is run from
@@ -12997,6 +13494,683 @@ else
   expect "S3 (b) bash -c, BASH set, PATH without bash: the registration reaches dispatch.sh" "S3-REACHED-DISPATCH bash:rc=0" "$S3_OUT:rc=$S3_RC"
 fi
 # ---- end v6.1 S3
+
+# ---- v7.0.0 model ladder: hooks/agent-result-notes.sh -- the "Step-up:" note (stdout asserted, every case exits 0).
+# PostToolUse(Agent): the report is tool_response.content (an array of text blocks), the model that ran is
+# tool_response.resolvedModel, else tool_input.model, else the agent file's own (cct:coder is `sonnet`).
+echo "=== hooks/agent-result-notes.sh (model ladder, step-up note) ==="
+ANR_NOTE() { # <type> <model> <reason> <next|top> -> the exact note JSON
+  if [ "$4" = top ]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Step-up: %s failed on %s (%s). Report this to the user instead of retrying."}}' "$1" "$2" "$3"
+  else
+    printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Step-up: %s failed on %s (%s). Start the same job again on %s."}}' "$1" "$2" "$3" "$4"
+  fi
+}
+anr_payload() { # <type> <tool_input model|-> <status> <resolvedModel|-> <report (JSON string body)|-> -> PostToolUse(Agent) payload; '-' = key absent
+  local ty="" mo="" rm="" ct=""
+  [ "$1" = "-" ] || ty="\"subagent_type\":\"$1\","
+  [ "$2" = "-" ] || mo="\"model\":\"$2\","
+  [ "$4" = "-" ] || rm=",\"resolvedModel\":\"$4\""
+  [ "$5" = "-" ] || ct=",\"content\":[{\"type\":\"text\",\"text\":\"$5\"}]"
+  printf '{"session_id":"t","hook_event_name":"PostToolUse","tool_name":"Agent","tool_input":{%s%s"prompt":"p","description":"d"},"tool_response":{"status":"%s"%s%s},"cwd":"%s"}' \
+    "$ty" "$mo" "$3" "$rm" "$ct" "$(jesc "$(natpath "$ROOT")")"
+}
+anr_run() { # <label> <want stdout> <payload> -> asserts the exact stdout and exit 0
+  local out rc
+  out=$(printf '%s' "$3" | CLAUDE_PLUGIN_ROOT="$ROOT" bash "$ROOT/hooks/agent-result-notes.sh" 2>/dev/null; echo "rc=$?")
+  rc=${out##*rc=}; out=${out%rc=*}
+  expect "ANR $1: exit 0" 0 "$rc"
+  expect "ANR $1: stdout" "$2" "$out"
+}
+ANR_FAIL='- [pass] 1. a\n- [fail] 2. x — y\nCommit: none\nGate: none\nConcerns: none'
+ANR_GATE='- [pass] 1. a\nCommit: abc\nGate: GATE FAILED: tests red\nConcerns: none'
+anr_run "sonnet fails brief item 2"        "$(ANR_NOTE cct:coder sonnet "brief item 2 failed" opus)"  "$(anr_payload cct:coder sonnet completed - "$ANR_FAIL")"
+anr_run "gate failed on sonnet"            "$(ANR_NOTE cct:coder sonnet "gate failed" opus)"          "$(anr_payload cct:coder sonnet completed - "$ANR_GATE")"
+anr_run "haiku steps up to sonnet"         "$(ANR_NOTE cct:coder haiku "brief item 2 failed" sonnet)" "$(anr_payload cct:coder haiku completed - "$ANR_FAIL")"
+anr_run "explicit claude-opus-5-5 -> fable (Review Focus 3)" "$(ANR_NOTE cct:coder opus "brief item 2 failed" fable)" "$(anr_payload cct:coder claude-opus-5-5 completed - "$ANR_FAIL")"
+anr_run "fable is the top rung"            "$(ANR_NOTE cct:coder fable "brief item 2 failed" top)"    "$(anr_payload cct:coder fable completed - "$ANR_FAIL")"
+anr_run "resolvedModel wins over tool_input.model" "$(ANR_NOTE cct:coder opus "brief item 2 failed" fable)" "$(anr_payload cct:coder sonnet completed claude-opus-5-5 "$ANR_FAIL")"
+anr_run "no model in the payload: the agent file's own (sonnet)" "$(ANR_NOTE cct:coder sonnet "brief item 2 failed" opus)" "$(anr_payload cct:coder - completed - "$ANR_FAIL")"
+anr_run "a fail line in the second text block" "$(ANR_NOTE cct:coder sonnet "brief item 3 failed" opus)" \
+  "$(anr_payload cct:coder sonnet completed - 'first' | sed 's/}\]}/},{"type":"text","text":"- [fail] 3. z"}]}/')"
+anr_run "plain-string tool_response"       "$(ANR_NOTE cct:coder sonnet "brief item 2 failed" opus)" \
+  "{\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"cct:coder\",\"model\":\"sonnet\"},\"tool_response\":\"$ANR_FAIL\",\"cwd\":\"$(jesc "$(natpath "$ROOT")")\"}"
+anr_run "clean report: no output"          "" "$(anr_payload cct:coder sonnet completed - '- [pass] 1. a\n- [pass] 2. b\nCommit: abc\nGate: GATE PASS abc\nConcerns: none')"
+anr_run "prose [fail] marker: no output (Review Focus 2)" "" "$(anr_payload cct:coder sonnet completed - 'Done. I checked the [fail] marker handling and the - [fail] 2. form in prose.\nCommit: abc\nGate: GATE PASS abc')"
+anr_run "short hand-back note: no output"  "" "$(anr_payload cct:coder sonnet completed - 'Report sent via SubagentHandback.')"
+anr_run "reviewer severity critical: no output" "" "$(anr_payload cct:code-reviewer sonnet completed - 'Severity: critical\n- [fail] 1. x')"
+anr_run "tester fail line: no output"      "" "$(anr_payload cct:tester sonnet completed - "$ANR_FAIL")"
+anr_run "general-purpose fail line: no output" "" "$(anr_payload general-purpose sonnet completed - "$ANR_FAIL")"
+anr_run "untyped spawn: no output"         "" "$(anr_payload - sonnet completed - "$ANR_FAIL")"
+anr_run "background spawn (async_launched): no output (Review Focus 1)" "" "$(anr_payload cct:coder sonnet async_launched sonnet -)"
+anr_run "status completed without content: no output" "" "$(anr_payload cct:coder sonnet completed - -)"
+anr_run "unknown model foo: no output"     "" "$(anr_payload cct:coder foo completed - "$ANR_FAIL")"
+anr_run "unknown agent type: no output"    "" "$(anr_payload cct:no-such-agent sonnet completed - "$ANR_FAIL")"
+anr_run "language coder dotnet-tools:dotnet-coder fails on sonnet -> opus (v7 table, Review Focus 3)" "$(ANR_NOTE dotnet-tools:dotnet-coder sonnet "brief item 2 failed" opus)" "$(anr_payload dotnet-tools:dotnet-coder sonnet completed - "$ANR_FAIL")"
+anr_run "language coder, no model in the payload: the table's sonnet" "$(ANR_NOTE python-tools:python-coder sonnet "gate failed" opus)" "$(anr_payload python-tools:python-coder - completed - "$ANR_GATE")"
+anr_run "language coder clean report: no output" "" "$(anr_payload rust-tools:rust-coder sonnet completed - '- [pass] 1. a\nCommit: abc\nGate: GATE PASS abc\nConcerns: none')"
+anr_run "unknown foo-tools:foo-coder fail line: no output" "" "$(anr_payload foo-tools:foo-coder sonnet completed - "$ANR_FAIL")"
+anr_run "another language-plugin agent (no table row): no output" "" "$(anr_payload dotnet-tools:other-agent sonnet completed - "$ANR_FAIL")"
+anr_run "another tool_name: no output"     "" "$(anr_payload cct:coder sonnet completed - "$ANR_FAIL" | sed 's/"tool_name":"Agent"/"tool_name":"Task"/')"
+anr_run "unreadable payload: no output"    "" 'this is not json'
+anr_run "empty payload: no output"         "" ''
+# ---- v6.3 backlog discipline: rule anr_followups -- a reviewer/tester report holding a "Follow-ups:" block with
+# at least one "- " line gets one fixed note (the item text is never quoted). Types: cct:code-reviewer|code-reviewer|cct:tester|tester.
+# The two rules are disjoint by type (step-up excludes code-reviewer and tester), so no payload makes both fire:
+# the single-space join of the two notes in one additionalContext cannot be pinned by a row.
+ANR_FU_NOTE='{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Add these follow-ups to the backlog as untriaged items."}}'
+anr_run "reviewer clean + Follow-ups block: the note (item text not quoted)" "$ANR_FU_NOTE" "$(anr_payload cct:code-reviewer sonnet completed - 'clean\nFollow-ups:\n- rename the helper (secret-token-xyz)\n- add a docs line')"
+anr_run "bare code-reviewer type: the note"             "$ANR_FU_NOTE" "$(anr_payload code-reviewer sonnet completed - 'clean\nFollow-ups:\n- one')"
+anr_run "cct:tester with a block: the note"             "$ANR_FU_NOTE" "$(anr_payload cct:tester sonnet completed - '**Verdict**: PASS\n\nFollow-ups:\n- flaky retry in suite B')"
+anr_run "bare tester type: the note"                    "$ANR_FU_NOTE" "$(anr_payload tester sonnet completed - 'PASS\nFollow-ups:\n- x')"
+anr_run "block in the second text block: the note"      "$ANR_FU_NOTE" \
+  "$(anr_payload cct:code-reviewer sonnet completed - 'clean' | sed 's/}\]}/},{"type":"text","text":"Follow-ups:\\n- later"}]}/')"
+anr_run "plain-string tool_response with a block: the note" "$ANR_FU_NOTE" \
+  '{"tool_name":"Agent","tool_input":{"subagent_type":"cct:code-reviewer"},"tool_response":"clean\nFollow-ups:\n- x","cwd":"."}'
+anr_run "reviewer clean alone: no output"               "" "$(anr_payload cct:code-reviewer sonnet completed - 'clean')"
+anr_run "Follow-ups header with no item line: no output" "" "$(anr_payload cct:code-reviewer sonnet completed - 'clean\nFollow-ups:\n')"
+anr_run "Follow-ups header, next line prose: no output" "" "$(anr_payload cct:code-reviewer sonnet completed - 'clean\nFollow-ups:\nnone really\n- stray bullet')"
+anr_run "Follow-ups: inside a sentence: no output"      "" "$(anr_payload cct:tester sonnet completed - 'PASS. See Follow-ups: below\n- a')"
+anr_run "coder report with a block: no output"          "" "$(anr_payload cct:coder sonnet completed - '- [pass] 1. a\nCommit: abc\nGate: GATE PASS abc\nConcerns: none\nFollow-ups:\n- x')"
+anr_run "architect with a block: no output"             "" "$(anr_payload cct:architect sonnet completed - 'Follow-ups:\n- x')"
+# the tester's report template, copied verbatim, must not fire the note: no line exactly "Follow-ups:" followed by a "- " line
+expect "agents/tester.md: its report template holds no Follow-ups block (a verbatim copy would fire the note)" 0 \
+  "$(awk 'p && /^- /{c++} {p = ($0 == "Follow-ups:")} END{print c+0}' "$ROOT/agents/tester.md")"
+anr_run "background reviewer (async_launched): no output" "" "$(anr_payload cct:code-reviewer sonnet async_launched sonnet -)"
+anr_run "reviewer without content: no output"           "" "$(anr_payload cct:code-reviewer sonnet completed - -)"
+# ---- end v7.0.0 agent-result-notes
+
+# ---- v6.3 backlog discipline: hooks/backlog-item-check.sh -- an MCP PR creation / merge must name a backlog item.
+# Fixtures are throwaway repos; "pushed" is a local refs/remotes/origin/<branch> ref (the hook uses no network).
+echo "=== hooks/backlog-item-check.sh (backlog discipline, MCP create + merge) ==="
+BIC_HOOK="$ROOT/hooks/backlog-item-check.sh"
+bic_state_full() { printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-3 ranked item\n- B-5 other item\n\n### Done\n- B-1 old item\n%b' "${BIC_EXTRA_DONE:-}"; }
+bic_state_bare() { printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n_none_\n'; }
+bic_mk() { # <name> <Task source line value|-> <full|bare> <originhead|noorigin> -> repo on branch feat, base main, nothing pushed for feat
+  local r; r=$(mkrepo "$1" main)
+  if [ "$2" = "-" ]; then printf '# Ctx\n\n- **Max parallel workstreams**: 5\n' > "$r/PROJECT_CONTEXT.md"
+  else printf '# Ctx\n\n- **Task source**: %s\n' "$2" > "$r/PROJECT_CONTEXT.md"; fi
+  if [ "$3" = full ]; then bic_state_full > "$r/PROJECT_STATE.md"; else bic_state_bare > "$r/PROJECT_STATE.md"; fi
+  git -C "$r" add -A >/dev/null 2>&1; git -C "$r" commit -q -m "base" >/dev/null 2>&1
+  git -C "$r" update-ref refs/remotes/origin/main HEAD
+  if [ "$4" = originhead ]; then git -C "$r" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main; fi
+  git -C "$r" checkout -q -b feat >/dev/null 2>&1
+  printf '%s\n' "$r"
+}
+bic_commit() { # <repo> <message> -- commits the working tree on top (adds work.txt, so the diff is not PROJECT_STATE.md-only)
+  printf 'work\n' >> "$1/work.txt"
+  git -C "$1" add -A >/dev/null 2>&1
+  printf '%b' "$2" > "$TMPROOT/bic-msg.txt"
+  git -C "$1" commit -q -F "$TMPROOT/bic-msg.txt" >/dev/null 2>&1
+}
+bic_push() { git -C "$1" update-ref refs/remotes/origin/feat HEAD; } # <repo>
+bic_create() { # <cwd> <head|-> <base|-> <body|-> -> mcp create_pull_request payload ('-' = key absent)
+  local h="" b="" bo=""
+  [ "$2" = "-" ] || h=",\"head\":\"$(jesc "$2")\""
+  [ "$3" = "-" ] || b=",\"base\":\"$(jesc "$3")\""
+  [ "$4" = "-" ] || bo=",\"body\":\"$(jesc "$4")\""
+  printf '{"session_id":"t","hook_event_name":"PreToolUse","tool_name":"mcp__MCP_DOCKER__create_pull_request","tool_input":{"owner":"o","repo":"r","title":"t"%s%s%s},"cwd":"%s"}\n' "$h" "$b" "$bo" "$(jesc "$1")"
+}
+BIC_TRAILER='feat: work\n\nbody line\n\nItem: none\nCo-Authored-By: T <t@t.t>\n'
+
+# file mode, allow
+BIC_R=$(bic_mk bic-mv "\`plan-files\`" full originhead)
+printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-5 other item\n\n### Done\n- B-3 ranked item\n- B-1 old item\n' > "$BIC_R/PROJECT_STATE.md"
+bic_commit "$BIC_R" 'feat: work B-3\n'; bic_push "$BIC_R"
+check_nomsg "backlog-item-check: file mode, B-3 Ranked in base and Done in HEAD: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main -)" "BLOCKED"
+check_nomsg "backlog-item-check: head with an owner: prefix and no base (origin/HEAD): allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" o:feat - -)" "BLOCKED"
+BIC_R=$(bic_mk bic-tr "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_nomsg "backlog-item-check: file mode, Item: none trailer: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main -)" "BLOCKED"
+BIC_R=$(bic_mk bic-ex "\`plan-files\`" full originhead)
+printf '\n- grooming note\n' >> "$BIC_R/PROJECT_STATE.md"
+git -C "$BIC_R" add -A >/dev/null 2>&1; git -C "$BIC_R" commit -q -m "groom" >/dev/null 2>&1; bic_push "$BIC_R"
+check_nomsg "backlog-item-check: file mode, diff touches only PROJECT_STATE.md: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main -)" "BLOCKED"
+BIC_R=$(bic_mk bic-bt "\`plan-files\`" bare originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_nomsg "backlog-item-check: file mode, base without subsections plus a trailer: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main -)" "BLOCKED"
+
+# file mode, refuse
+BIC_R=$(bic_mk bic-bn "\`plan-files\`" bare originhead)
+bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: file mode, base without subsections and no trailer: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "three headings"
+check_msg "backlog-item-check: that refusal names the trailer" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" 'Item: none'
+check_msg "backlog-item-check: that refusal starts BLOCKED: backlog-item-check:" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" 'BLOCKED: backlog-item-check:'
+BIC_R=$(bic_mk bic-nm "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: file mode, no move and no trailer: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+check_msg "backlog-item-check: no Gate line in PROJECT_CONTEXT.md: a no-item PR is still refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "backlog-item-check"
+BIC_R=$(bic_mk bic-b9 "\`plan-files\`" full originhead)
+printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-3 ranked item\n- B-5 other item\n\n### Done\n- B-9 brand new\n- B-1 old item\n' > "$BIC_R/PROJECT_STATE.md"
+bic_commit "$BIC_R" 'feat: work B-9\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: file mode, B-9 only in HEAD's Done is not a move: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+# fix round 1 (C1): a stale duplicate in the base (B-3 in Ranked AND Done) is not a move for an unrelated PR
+BIC_R=$(BIC_EXTRA_DONE='- B-3 stale copy\n' bic_mk bic-sd "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" 'feat: unrelated work\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: stale duplicate in base (B-3 Ranked and Done), unrelated PR: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+check_msg "backlog-item-check: stale duplicate in base, merge of an unrelated PR: refused" "$BIC_HOOK" 2 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$BIC_R")" '### Done'
+# C1: B-3 added to Done but kept in Ranked creates exactly that stale state: not a move
+BIC_R=$(bic_mk bic-kr "\`plan-files\`" full originhead)
+printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-3 ranked item\n- B-5 other item\n\n### Done\n- B-3 ranked item\n- B-1 old item\n' > "$BIC_R/PROJECT_STATE.md"
+bic_commit "$BIC_R" 'feat: work B-3\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: B-3 added to Done but kept in Ranked: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+# M1: base and head must be branch names
+BIC_R=$(bic_mk bic-bn2 "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_msg "backlog-item-check: base main~1 is not a branch name: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat 'main~1' -)" "not a branch name"
+check_msg "backlog-item-check: base main@{0} is not a branch name: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat 'main@{0}' -)" "not a branch name"
+check_msg "backlog-item-check: head feat~1 is not a branch name: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" 'feat~1' main -)" "not a branch name"
+check_msg "backlog-item-check: head feat@{0} is not a branch name: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" 'feat@{0}' main -)" "not a branch name"
+BIC_R=$(bic_mk bic-wb "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_msg "backlog-item-check: the cwd branch is not the PR's head: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" other main -)" "own checkout"
+BIC_R=$(bic_mk bic-ah "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+bic_commit "$BIC_R" "$BIC_TRAILER"
+check_msg "backlog-item-check: HEAD is ahead of origin/<head>: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "push first"
+BIC_R=$(bic_mk bic-np "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"
+check_msg "backlog-item-check: no origin/<head> ref at all: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "push first"
+BIC_R=$(bic_mk bic-nb "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_msg "backlog-item-check: origin/<base> is missing: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat release -)" "fetch first"
+BIC_R=$(bic_mk bic-nh "\`plan-files\`" full noorigin)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_msg "backlog-item-check: no base given and no origin/HEAD: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat - -)" "pass --base"
+check_nomsg "backlog-item-check: an explicit base needs no origin/HEAD" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main -)" "BLOCKED"
+BIC_R=$(bic_mk bic-nl "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" 'feat: work\n\nItem: none\n\nSigned-off-by: T <t@t.t>\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: Item: none outside the last paragraph is not a trailer: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" '### Done'
+
+# merge second line (file mode only)
+BIC_R=$(bic_mk bic-mg "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
+for bic_t in mcp__MCP_DOCKER__merge_pull_request mcp__github-tools__github_pr_auto_merge mcp__plugin_github-tools_github-tools__github_pr_auto_merge; do
+  check_msg "backlog-item-check: file mode merge, no item ($bic_t): refused" "$BIC_HOOK" 2 "$(mkjson_mcp "$bic_t" "$BIC_R")" '### Done'
+done
+BIC_R=$(bic_mk bic-mt "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" "$BIC_TRAILER"; bic_push "$BIC_R"
+check_nomsg "backlog-item-check: file mode merge with an Item: none trailer: allowed" "$BIC_HOOK" 0 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$BIC_R")" "BLOCKED"
+
+# issue mode
+BIC_R=$(bic_mk bic-is "github-issues" bare originhead)
+check_nomsg "backlog-item-check: issue mode, Fixes #12: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'Fixes #12')" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, lowercase closes #5 on a later line: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'summary
+
+this closes #5.')" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, a line Item: none: allowed" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'text
+Item: none
+more')" "BLOCKED"
+check_msg "backlog-item-check: issue mode, see #12: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'see #12')" "backlog-item-check"
+check_msg "backlog-item-check: issue mode, Closes other/repo#12 (cross-repo): refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'Closes other/repo#12')" "backlog-item-check"
+check_msg "backlog-item-check: issue mode, Item: none inside a sentence: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'this is Item: none really')" "backlog-item-check"
+check_msg "backlog-item-check: issue mode, no body at all: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "backlog-item-check"
+check_nomsg "backlog-item-check: issue mode merge passes (no local view of the body; documented)" "$BIC_HOOK" 0 "$(mkjson_mcp mcp__MCP_DOCKER__merge_pull_request "$BIC_R")" "BLOCKED"
+
+# mode
+BIC_R=$(bic_mk bic-ms - full originhead)
+check_msg "backlog-item-check: Task source missing: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'Fixes #1')" "Task source"
+BIC_R=$(bic_mk bic-mj "\`jira\`" full originhead)
+check_msg "backlog-item-check: Task source jira: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'Fixes #1')" "Task source"
+BIC_R=$(bic_mk bic-mx "\`plan-files\` and more" full originhead)
+check_msg "backlog-item-check: Task source with trailing words: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main 'Fixes #1')" "Task source"
+BIC_R=$(bic_mk bic-mb "github-issues  " bare originhead)
+check_nomsg "backlog-item-check: Task source without backticks, trailing spaces: issue mode" "$BIC_HOOK" 0 "$(bic_create "$BIC_R" feat main 'Fixes #1')" "BLOCKED"
+
+# kill switch, unknown tool, stray Bash, bad payload
+BIC_R=$(bic_mk bic-ks "\`plan-files\`" full originhead)
+bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
+check_msg "backlog-item-check: control, the same no-item PR is refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "backlog-item-check"
+mkdir -p "$BIC_R/.claude"; : > "$BIC_R/.claude/git-guard-off"
+check "backlog-item-check: kill switch (.claude/git-guard-off) allows" hooks/backlog-item-check.sh 0 "$(bic_create "$BIC_R" feat main -)"
+rm -f "$BIC_R/.claude/git-guard-off"
+check_msg "backlog-item-check: an unknown tool name is refused" "$BIC_HOOK" 2 "$(mkjson_mcp mcp__x__other "$BIC_R")" "backlog-item-check"
+check "backlog-item-check: a Bash call without the gh pr words exits 0 (early exit, no git-cmd)" hooks/backlog-item-check.sh 0 "$(mkjson Bash 'ls -la' "$BIC_R")"
+check_msg "backlog-item-check: a no-item gh pr create via Bash is refused (was: exit 0 before the gh shapes)" "$BIC_HOOK" 2 "$(mkjson Bash "gh pr create --base main --title t --body-file $BIC_R/PROJECT_CONTEXT.md" "$BIC_R")" '### Done'
+check_msg "backlog-item-check: gh pr create outside a git checkout is refused" "$BIC_HOOK" 2 "$(mkjson Bash 'gh pr create --base main' "$TMPROOT/tmp")" "not inside a git checkout"
+
+# ---- Task 3: gh pr create and gh pr merge in Bash and PowerShell commands (through the dispatcher too)
+bic_sh() { mkjson Bash "$2" "$1"; }   # <cwd> <command>
+bic_ps() { mkjson PowerShell "$2" "$1"; }
+bic_shb() { mkjson Bash "$2 --body-file $BIC_BF" "$1"; }   # <cwd> <command>: the command plus a body file (file mode reads no content, but the form is checked)
+bic_psb() { mkjson PowerShell "$2 --body-file $BIC_BF" "$1"; }
+# file mode: a move repo (B-3 Ranked in base, Done in HEAD), a no-move repo, a trailer repo, one with no origin/HEAD
+BIC_MV=$(bic_mk bic-gmv "\`plan-files\`" full originhead)
+printf '# State\n\n## Now\n\n- x\n\n## Backlog\n\n### Untriaged\n- B-14 untriaged item\n\n### Ranked\n- B-5 other item\n\n### Done\n- B-3 ranked item\n- B-1 old item\n' > "$BIC_MV/PROJECT_STATE.md"
+bic_commit "$BIC_MV" 'feat: work B-3\n'; bic_push "$BIC_MV"
+BIC_NM=$(bic_mk bic-gnm "\`plan-files\`" full originhead)
+bic_commit "$BIC_NM" 'feat: work\n'; bic_push "$BIC_NM"
+BIC_TR=$(bic_mk bic-gtr "\`plan-files\`" full originhead)
+bic_commit "$BIC_TR" "$BIC_TRAILER"; bic_push "$BIC_TR"
+BIC_NO=$(bic_mk bic-gno "\`plan-files\`" full noorigin)
+bic_commit "$BIC_NO" "$BIC_TRAILER"; bic_push "$BIC_NO"
+printf 'Closes #4\n' > "$TMPROOT/bic-body-ok.md"
+printf 'sync\nItem: none\n' > "$TMPROOT/bic-body-none.md"
+printf 'see #4\n' > "$TMPROOT/bic-body-bad.md"
+BIC_BF="$TMPROOT/bic-body-ok.md"; BIC_BN="$TMPROOT/bic-body-none.md"; BIC_BB="$TMPROOT/bic-body-bad.md"
+
+check_nomsg "backlog-item-check: gh pr create, file mode, a move, --base main: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title t')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create, file mode, a move, no --base (origin/HEAD): allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --title t')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create -B main -H feat: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create -B main -H feat --title t')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create --base=main --head=feat: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --base=main --head=feat')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create -Bmain -Hfeat: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create -Bmain -Hfeat')" "BLOCKED"
+check_msg "backlog-item-check: file mode refuses the body forms too: --fill, a move repo" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --fill')" "use --body-file"
+check_msg "backlog-item-check: file mode, --body x, a move repo: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --body x')" "use --body-file"
+check_msg "backlog-item-check: file mode, no body flag at all, a move repo: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --title t')" "use --body-file"
+check_msg "backlog-item-check: file mode, --body-file together with --fill: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr create --base main --fill --body-file $BIC_BF")" "use --body-file"
+check_msg "backlog-item-check: file mode, a body file that does not exist: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr create --base main --body-file $TMPROOT/no-such-body.md")" "cannot read the body file"
+check_msg "backlog-item-check: file mode, --body-file with a \$VAR path: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --body-file $F')" "cannot tell which file"
+check_nomsg "backlog-item-check: file mode, -F <file> in a move repo: allowed (the content is not judged in file mode)" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" "gh pr create --base main -F $BIC_BB")" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr create via PowerShell, a move: allowed" "$BIC_HOOK" 0 "$(bic_psb "$BIC_MV" 'gh pr create --base main --title t')" "BLOCKED"
+check_nomsg "backlog-item-check: a gh pr create with a quoted title, a move: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "feat: B-3 done"')" "BLOCKED"
+check_msg "backlog-item-check: bash -c wrapping gh pr merge: the quote on the command word is refused (strict)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'bash -c "gh pr merge 5"')" "as one plain command"
+check_nomsg "backlog-item-check: gh pr merge 5 --squash, file mode, a move, no Gate line: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr merge 5 --squash')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr merge via PowerShell, a move: allowed" "$BIC_HOOK" 0 "$(bic_ps "$BIC_MV" 'gh pr merge 5 --squash')" "BLOCKED"
+check_nomsg "backlog-item-check: gh.exe pr create (PowerShell), a move: allowed" "$BIC_HOOK" 0 "$(bic_psb "$BIC_MV" 'gh.exe pr create --base main')" "BLOCKED"
+check_msg "backlog-item-check: gh pr create, file mode, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr create --base main --title t')" '### Done'
+check_msg "backlog-item-check: that refusal starts BLOCKED: backlog-item-check:" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr create --base main --title t')" 'BLOCKED: backlog-item-check:'
+check_msg "backlog-item-check: gh pr create via PowerShell, no move: refused" "$BIC_HOOK" 2 "$(bic_psb "$BIC_NM" 'gh pr create --base main')" '### Done'
+check_msg "backlog-item-check: gh pr merge 5, file mode, no move: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr merge 5 --squash')" '### Done'
+check_msg "backlog-item-check: gh pr merge via PowerShell, no move: refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_NM" 'gh pr merge 5')" '### Done'
+check_msg "backlog-item-check: gh pr create --head other: the cwd is not the PR's own checkout" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --head other')" "own checkout"
+check_msg "backlog-item-check: gh pr create, base not given and no origin/HEAD: pass --base" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NO" 'gh pr create --title t')" "pass --base"
+check_nomsg "backlog-item-check: gh pr create --base main needs no origin/HEAD" "$BIC_HOOK" 0 "$(bic_shb "$BIC_NO" 'gh pr create --base main --title t')" "BLOCKED"
+check_msg "backlog-item-check: gh pr merge with no origin/HEAD: refused, names the fix" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NO" 'gh pr merge 5')" "set-head"
+check_msg "backlog-item-check: gh pr create --base main~1 is not a branch name" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main~1')" "not a branch name"
+check_msg "backlog-item-check: gh pr create --base with no value is refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base')" "has no value"
+# sync flow: a commit trailer plus --body-file with an Item: none line
+check_nomsg "backlog-item-check: sync flow, file mode: trailer plus --body-file with Item: none" "$BIC_HOOK" 0 "$(bic_sh "$BIC_TR" "gh pr create --base main --title t --body-file $BIC_BN")" "BLOCKED"
+# the shapes that are not this hook's
+check "backlog-item-check: gh pr list exits 0" hooks/backlog-item-check.sh 0 "$(bic_sh "$BIC_NM" 'gh pr list --state open')"
+check "backlog-item-check: gh pr view exits 0" hooks/backlog-item-check.sh 0 "$(bic_sh "$BIC_NM" 'gh pr view 5')"
+check "backlog-item-check: git status exits 0" hooks/backlog-item-check.sh 0 "$(bic_sh "$BIC_NM" 'git status')"
+BIC_MAIN=$(mkrepo bic-gmain main)
+check "backlog-item-check: git merge feature on main exits 0 (not this hook's shape)" hooks/backlog-item-check.sh 0 "$(bic_sh "$BIC_MAIN" 'git merge feature')"
+check "backlog-item-check: a Bash payload with no command key exits 0" hooks/backlog-item-check.sh 0 "$(mkjson_nocmd Bash "$BIC_NM")"
+check_msg "backlog-item-check: a command key that reads as empty is refused" "$BIC_HOOK" 2 "$(mkjson_emptycmd Bash "$BIC_NM")" "could not read"
+# forms the segment finder must still see
+check_msg "backlog-item-check: gh pr \"create\" (a quoted verb) is refused, cannot determine" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr "create" --base main')" "as one plain command"
+check_msg "backlog-item-check: bash -c 'gh pr merge 5', no move: refused (the quote is not judged)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'bash -c "gh pr merge 5"')" "as one plain command"
+check_msg "backlog-item-check: env assignment before gh: refused (not the plain shape)" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'GH_TOKEN=x gh pr create --base main')" "as one plain command"
+check_msg "backlog-item-check: gh pr create after && in a chain: refused, its own command" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'git status && gh pr create --base main')" "as one plain command"
+check_msg "backlog-item-check: gh pr merge in a subshell: refused (not the plain shape)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" '(gh pr merge 5)')" "as one plain command"
+check_msg "backlog-item-check: a continuation line between gh pr and create, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr \
+create --base main')" '### Done'
+check_msg "backlog-item-check: g\\h pr create (backslash inside the word) is refused (not the plain shape)" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'g\h pr create --base main')" "as one plain command"
+check_msg "backlog-item-check: narration that holds the words is refused too (documented)" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'echo gh pr create')" "as one plain command"
+check_msg "backlog-item-check: a single leading cd <abs> && gh pr create is judged in the cd target (no move there): refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" "cd $BIC_NM && gh pr create --base main")" '### Done'
+check_nomsg "backlog-item-check: a single leading cd <abs> && gh pr create, a move in the cd target, cwd elsewhere: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_NM" "cd $BIC_MV && gh pr create --base main")" "BLOCKED"
+check_nomsg "backlog-item-check: a single leading cd <abs> && gh pr merge 5, a move in the cd target: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" "cd $BIC_MV && gh pr merge 5")" "BLOCKED"
+check_msg "backlog-item-check: cd ; gh pr create (not a leading cd &&) is refused, its own command" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" "cd $BIC_MV; gh pr create --base main")" "as one plain command"
+check_msg "backlog-item-check: a cd after gh pr merge is refused too" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr merge 5; cd $BIC_NM")" "directory change"
+check_msg "backlog-item-check: gh pr create, Task source missing: refused" "$BIC_HOOK" 2 "$(bic_sh "$(bic_mk bic-gms - full originhead)" 'gh pr create --base main')" "Task source"
+mkdir -p "$BIC_NM/.claude"; : > "$BIC_NM/.claude/git-guard-off"
+check "backlog-item-check: kill switch allows a gh pr create via Bash" hooks/backlog-item-check.sh 0 "$(bic_shb "$BIC_NM" 'gh pr create --base main')"
+rm -f "$BIC_NM/.claude/git-guard-off"
+
+# ---- fix round 1: the gh pr new alias, script bodies, other segments, shapes that cannot be judged, flag-shaped titles
+printf '%s\n' 'gh pr create --fill' > "$TMPROOT/bic-script-fill.sh"
+printf '%s\n' 'gh pr view 5' > "$TMPROOT/bic-script-view.sh"
+printf '%s\n' "gh pr create --base main --body-file $BIC_BF" > "$TMPROOT/bic-script-ok.sh"
+# 1. the alias: new is create
+check_msg "backlog-item-check: gh pr new --fill, a move repo: refused like create, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr new --fill')" "use --body-file"
+check_msg "backlog-item-check: gh pr new, no move: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_NM" 'gh pr new --base main')" '### Done'
+check_nomsg "backlog-item-check: gh pr new, a move: allowed" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr new --base main')" "BLOCKED"
+check_msg "backlog-item-check: gh pr new --fill via PowerShell: refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_MV" 'gh pr new --fill')" "use --body-file"
+# 2. script bodies are scanned (strict: a script holding gh pr create/new/merge is refused)
+check_msg "backlog-item-check: bash script.sh whose body holds gh pr create --fill: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "bash $TMPROOT/bic-script-fill.sh")" "as one plain command"
+check_msg "backlog-item-check: a script holding a clean gh pr create is refused too (strict, not judged)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "bash $TMPROOT/bic-script-ok.sh")" "as one plain command"
+check_nomsg "backlog-item-check: a script holding only gh pr view is not this hook's shape" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" "bash $TMPROOT/bic-script-view.sh")" "BLOCKED"
+# 3. another segment changes what gh acts on: the gated command must be the only segment
+check_msg "backlog-item-check: git checkout then gh pr create -F: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "git checkout nomv && gh pr create --base main -F $BIC_BF")" "as one plain command"
+check_msg "backlog-item-check: writing the body file then gh pr create -F: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "printf no-item > $TMPROOT/b.md && gh pr create --base main -F $TMPROOT/b.md")" "as one plain command"
+check_msg "backlog-item-check: gh pr merge ; other: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5; ls')" "as one plain command"
+check_msg "backlog-item-check: gh pr merge | tee: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5 | tee x')" "as one plain command"
+check_msg "backlog-item-check: gh pr merge || true: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5 || true')" "as one plain command"
+check_msg "backlog-item-check: gh pr merge & (background): refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5 & ls')" "as one plain command"
+check_msg "backlog-item-check: a command substitution inside gh pr create: refused, its own command" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --title "$(git checkout nomv)" -F x')" "as one plain command"
+check_msg "backlog-item-check: a PowerShell chain before gh pr merge: refused, its own command" "$BIC_HOOK" 2 "$(bic_ps "$BIC_MV" 'git checkout nomv; gh pr merge 5')" "as one plain command"
+# 4. shapes this hook cannot determine are refused; other literal verbs pass
+check_msg "backlog-item-check: gh pr -R o/r create --fill: the -R value is skipped, create is judged" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr -R o/r create --fill')" "use --body-file"
+check_msg "backlog-item-check: gh pr --repo o/r merge 5, no move: judged" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr --repo o/r merge 5')" '### Done'
+check_msg "backlog-item-check: PowerShell g\`h pr create (backtick in the word): refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_MV" 'g`h pr create --base main')" "as one plain command"
+check_msg "backlog-item-check: G=gh; \$G pr create: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'G=gh; $G pr create --base main')" "as one plain command"
+check_nomsg "backlog-item-check: gh pr checks 5 passes (a literal verb that is not create, new or merge)" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr checks 5')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr view 5 --json title passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr view 5 --json title')" "BLOCKED"
+check_nomsg "backlog-item-check: a pr word after another command (git log | grep pr) passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'git log --oneline | grep pr')" "BLOCKED"
+# 5. the body-form refusal names the other fix too
+check_msg "backlog-item-check: the body-form refusal names the text-in-another-command fix" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr create --base main --fill')" "move that text into a file"
+# 6. flag-shaped words in a title, repeated value flags
+check_msg "backlog-item-check: --title \"a --base x\" holds a flag-shaped word: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "a --base x"')" "flag-shaped"
+check_msg "backlog-item-check: --title -F x (unquoted flag-shaped title): refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title -F')" "flag-shaped"
+check_msg "backlog-item-check: -t \"a -b\" holds a flag-shaped word: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main -t "a -b"')" "flag-shaped"
+check_msg "backlog-item-check: --base given twice: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --base other')" "more than once"
+check_msg "backlog-item-check: --body-file given twice: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr create --base main --body-file $BIC_BF -F $BIC_BB")" "more than once"
+check_msg "backlog-item-check: --title given twice: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title a --title b')" "more than once"
+check_nomsg "backlog-item-check: a plain multi-word title is fine" "$BIC_HOOK" 0 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "feat: move B-3 to done"')" "BLOCKED"
+# ---- fix round 2: detection on normalized text, then ONE plain shape (everything else refused), everyday text free
+# the six shapes that exited 0 after round 1 (the old whole-text backstop was gone)
+check_msg "backlog-item-check: true &gh pr create --fill: refused (not the plain shape)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'true &gh pr create --fill')" "as one plain command"
+check_msg "backlog-item-check: PowerShell &gh pr create --fill: refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_MV" '&gh pr create --fill')" "as one plain command"
+check_msg "backlog-item-check: env -u pr gh pr create --fill: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'env -u pr gh pr create --fill')" "as one plain command"
+check_msg "backlog-item-check: sudo -u pr gh pr create --fill: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'sudo -u pr gh pr create --fill')" "as one plain command"
+check_msg "backlog-item-check: gh <backslash-newline> pr create --fill: joined, then refused for its body form" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh \
+pr create --fill')" "use --body-file"
+check_msg "backlog-item-check: bash -c gh\\ pr\\ create\\ --fill: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'bash -c gh\ pr\ create\ --fill')" "as one plain command"
+# everyday text holding pr, PR or gh stays free (exit 0)
+printf '%s\n' 'echo "this PR is ready"' > "$TMPROOT/bic-script-echo.sh"
+check_nomsg "backlog-item-check: git commit -m \"Fix PR template\" passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'git commit -m "Fix PR template"')" "BLOCKED"
+check_nomsg "backlog-item-check: git commit -m \"this pr adds x\" passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'git commit -m "this pr adds x"')" "BLOCKED"
+check_nomsg "backlog-item-check: echo \"\$x\" pr passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'echo "$x" pr')" "BLOCKED"
+check_nomsg "backlog-item-check: a script that echoes \"this PR is ready\" passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" "bash $TMPROOT/bic-script-echo.sh")" "BLOCKED"
+check_nomsg "backlog-item-check: for pr in \$(gh pr list) passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'for pr in $(gh pr list); do echo $pr; done')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr view 5 and gh pr list --json number pass" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr list --json number')" "BLOCKED"
+# accepted and documented: a commit message that holds the words is refused with the fix text
+check_msg "backlog-item-check: git commit -m \"docs: gh pr create flow\" is refused (accepted, documented)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'git commit -m "docs: gh pr create flow"')" "into a file"
+# a verb or a command word that is built from a variable is refused too
+check_msg "backlog-item-check: gh pr \$V alone is refused (a built verb)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr $V')" "as one plain command"
+check_msg "backlog-item-check: \$G pr create alone is refused (a built command word)" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" '$G pr create --base main')" "as one plain command"
+# ---- fix round 3: Windows paths to gh, built verbs and command words, wrapper scripts in either order, 2>&1
+# a Windows backslash path to gh (the backslash is a separator, not an escape): detected, then refused as not the plain shape
+check_msg "backlog-item-check: PowerShell & \"C:\\...\\gh.exe\" pr merge 5: refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_MV" '& "C:\Program Files\GitHub CLI\gh.exe" pr merge 5')" "as one plain command"
+check_msg "backlog-item-check: PowerShell & 'C:\\...\\gh.exe' pr merge 5 (single quotes): refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_MV" "& 'C:\\Program Files\\GitHub CLI\\gh.exe' pr merge 5")" "as one plain command"
+check_msg "backlog-item-check: C:\\tools\\gh.exe pr merge 5 (unquoted path): refused" "$BIC_HOOK" 2 "$(bic_ps "$BIC_MV" 'C:\tools\gh.exe pr merge 5')" "as one plain command"
+check_msg "backlog-item-check: Bash \"C:\\tools\\gh.exe\" pr merge 5 (double-quoted path): refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" '"C:\tools\gh.exe" pr merge 5')" "as one plain command"
+check_nomsg "backlog-item-check: C:\\tools\\gh.exe pr view 5 passes (control)" "$BIC_HOOK" 0 "$(bic_ps "$BIC_MV" 'C:\tools\gh.exe pr view 5')" "BLOCKED"
+check_nomsg "backlog-item-check: gh.exe pr merge 5 (plain, PowerShell, a move) is allowed (control)" "$BIC_HOOK" 0 "$(bic_ps "$BIC_MV" 'gh.exe pr merge 5')" "BLOCKED"
+# a verb or command word built from a variable or substitution in the same command
+check_msg "backlog-item-check: V=merge; gh pr \$V 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'V=merge; gh pr $V 5')" "as one plain command"
+check_msg "backlog-item-check: V=create; gh pr \$V --fill: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'V=create; gh pr $V --fill')" "as one plain command"
+check_msg "backlog-item-check: gh pr cr\${x}eate --fill: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr cr${x}eate --fill')" "as one plain command"
+check_msg "backlog-item-check: gh pr mer\$(true)ge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr mer$(true)ge 5')" "as one plain command"
+check_msg "backlog-item-check: H=h; g\$H pr merge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'H=h; g$H pr merge 5')" "as one plain command"
+check_msg "backlog-item-check: G=g; \${G}h pr merge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'G=g; ${G}h pr merge 5')" "as one plain command"
+printf '%s\n' 'gh pr "$1" 5' > "$TMPROOT/bic-script-arg.sh"
+printf '%s\n' 'gh "$@"' > "$TMPROOT/bic-script-all.sh"
+check_msg "backlog-item-check: bash s.sh merge, s.sh holds gh pr \"\$1\" 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "bash $TMPROOT/bic-script-arg.sh merge")" "as one plain command"
+check_msg "backlog-item-check: bash s.sh pr merge 5, s.sh holds gh \"\$@\" (the words come in the other order): refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "bash $TMPROOT/bic-script-all.sh pr merge 5")" "as one plain command"
+# controls: a \$ word next to pr without a verb, and a \$ argument after a literal verb, stay free
+check_nomsg "backlog-item-check: gh pr view \$n passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr view $n')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr checks \$n passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr checks $n')" "BLOCKED"
+check_nomsg "backlog-item-check: echo \$x pr passes (control)" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'echo $x pr')" "BLOCKED"
+# the fix text fits an over-block, and a trailing 2>&1 is allowed on a plain segment
+check_msg "backlog-item-check: gh pr checkout 5 && git merge main: refused (broad detection), the text says to split" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr checkout 5 && git merge main')" "split any other part"
+check_nomsg "backlog-item-check: gh pr merge 5 2>&1, a move: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr merge 5 2>&1')" "BLOCKED"
+check_msg "backlog-item-check: gh pr merge 5 2>&1, no move: judged" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr merge 5 2>&1')" '### Done'
+check_nomsg "backlog-item-check: gh pr create ... --body-file F 2>&1, a move: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" "gh pr create --base main --body-file $BIC_BF 2>&1")" "BLOCKED"
+check_msg "backlog-item-check: gh pr merge 5 2>&1 | tee x: still refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5 2>&1 | tee x')" "as one plain command"
+check_msg "backlog-item-check: gh pr merge 5 2>&1 & ls: still refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr merge 5 2>&1 & ls')" "as one plain command"
+# ---- fix round 4: a built verb or command word next to -R/--repo, backticks, a wrapper's split words
+check_msg "backlog-item-check: gh pr -R o/r \$V 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr -R o/r $V 5')" "as one plain command"
+check_msg "backlog-item-check: gh pr -Ro/r \$V 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr -Ro/r $V 5')" "as one plain command"
+check_msg "backlog-item-check: gh pr --repo o/r \$V 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr --repo o/r $V 5')" "as one plain command"
+check_msg "backlog-item-check: gh pr --repo=o/r mer\$(true)ge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr --repo=o/r mer$(true)ge 5')" "as one plain command"
+check_msg "backlog-item-check: gh pr -R o/r -R o/r \$V 5 (repeated flag): refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr -R o/r -R o/r $V 5')" "as one plain command"
+check_msg "backlog-item-check: gh -R o/r pr \$V 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh -R o/r pr $V 5')" "as one plain command"
+check_msg "backlog-item-check: \$G -R o/r pr merge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" '$G -R o/r pr merge 5')" "as one plain command"
+check_msg "backlog-item-check: gh pr mer\`true\`ge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'gh pr mer`true`ge 5')" "as one plain command"
+check_msg "backlog-item-check: g\`true\`h pr merge 5: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" 'g`true`h pr merge 5')" "as one plain command"
+printf '%s\n' 'gh "$1" merge "$2"' > "$TMPROOT/bic-script-split.sh"
+check_msg "backlog-item-check: bash s.sh pr 5, s.sh holds gh \"\$1\" merge \"\$2\" (words split across both): refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "bash $TMPROOT/bic-script-split.sh pr 5")" "as one plain command"
+# controls: these stay free, and a plain merge with -R is still judged
+check_nomsg "backlog-item-check: for pr in \$(gh pr list); do :; done passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'for pr in $(gh pr list); do :; done')" "BLOCKED"
+check_nomsg "backlog-item-check: for pr in \`gh pr list\`; do :; done passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'for pr in `gh pr list`; do :; done')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr list --json number | jq . passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr list --json number | jq .')" "BLOCKED"
+check_nomsg "backlog-item-check: echo \`date\` pr passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'echo `date` pr')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr view \`cat n\` passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr view `cat n`')" "BLOCKED"
+check_nomsg "backlog-item-check: gh pr -R o/r view \$n passes" "$BIC_HOOK" 0 "$(bic_sh "$BIC_NM" 'gh pr -R o/r view $n')" "BLOCKED"
+check_msg "backlog-item-check: gh pr -R o/r merge 5, no move: judged" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" 'gh pr -R o/r merge 5')" '### Done'
+check_nomsg "backlog-item-check: gh pr -R o/r merge 5, a move: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_MV" 'gh pr -R o/r merge 5')" "BLOCKED"
+# ---- fix round 5: a wrapper that reorders its arguments (the three words in any order across script and arguments)
+printf '%s\n' 'gh "$2" "$1" "$3"' > "$TMPROOT/bic-script-swap.sh"
+printf '%s\n' '"$3" "$2" "$1" "$4"' > "$TMPROOT/bic-script-rev.sh"
+check_msg "backlog-item-check: bash s.sh merge pr 5, s.sh holds gh \"\$2\" \"\$1\" \"\$3\": refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" "bash $TMPROOT/bic-script-swap.sh merge pr 5")" "as one plain command"
+check_msg "backlog-item-check: bash s.sh merge pr gh 5, s.sh holds \"\$3\" \"\$2\" \"\$1\" \"\$4\": refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_NM" "bash $TMPROOT/bic-script-rev.sh merge pr gh 5")" "as one plain command"
+# 7. a payload that does not parse is refused with this hook's own prefix
+check_msg "backlog-item-check: a truncated payload is refused with the hook's own prefix" "$BIC_HOOK" 2 '{"tool_name":"Bash","tool_input":{"command":"gh pr' "BLOCKED: backlog-item-check:"
+
+# issue mode: the body comes ONLY from --body-file / -F, read by the hook
+BIC_IS=$(bic_mk bic-gis "github-issues" bare originhead)
+check_nomsg "backlog-item-check: issue mode, --body-file with Closes #4: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_IS" "gh pr create --base main --title t --body-file $BIC_BF")" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, -F with Closes #4: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_IS" "gh pr create --title t -F $BIC_BF")" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, --body-file=<path>: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_IS" "gh pr create --body-file=$BIC_BF")" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, -F<path> attached: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_IS" "gh pr create -F$BIC_BF")" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, a body file with an Item: none line: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_IS" "gh pr create --body-file $BIC_BN")" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, PowerShell with -F: allowed" "$BIC_HOOK" 0 "$(bic_ps "$BIC_IS" "gh pr create -F $BIC_BF")" "BLOCKED"
+cp "$BIC_BF" "$BIC_IS/pr-body.md"
+check_nomsg "backlog-item-check: issue mode, a body file relative to the cwd: allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_IS" 'gh pr create --body-file pr-body.md')" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, the sync flow (trailer commit plus --body-file with Item: none): allowed" "$BIC_HOOK" 0 "$(bic_sh "$BIC_IS" "gh pr create --base main --title t --body-file $BIC_BN")" "BLOCKED"
+check_msg "backlog-item-check: issue mode, --body \"Fixes #4\": refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --body "Fixes #4"')" "use --body-file"
+check_msg "backlog-item-check: issue mode, -b \"Fixes #4\": refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create -b "Fixes #4"')" "use --body-file"
+check_msg "backlog-item-check: issue mode, --body=\"Fixes #4\": refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --body="Fixes #4"')" "use --body-file"
+check_msg "backlog-item-check: issue mode, --fill: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --fill')" "use --body-file"
+check_msg "backlog-item-check: issue mode, --fill-first: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --fill-first')" "use --body-file"
+check_msg "backlog-item-check: issue mode, --fill-verbose: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --fill-verbose')" "use --body-file"
+check_msg "backlog-item-check: issue mode, --template: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --template t.md')" "use --body-file"
+check_msg "backlog-item-check: issue mode, --editor: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --editor')" "use --body-file"
+check_msg "backlog-item-check: issue mode, --web: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --web')" "use --body-file"
+check_msg "backlog-item-check: issue mode, no body flag at all: refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --base main --title t')" "use --body-file"
+check_msg "backlog-item-check: issue mode, --body \"\$(cat x)\": refused, use --body-file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --body "$(cat x)"')" "use --body-file"
+check_msg "backlog-item-check: issue mode, --body-file together with --body: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" "gh pr create --body-file $BIC_BF --body x")" "use --body-file"
+check_msg "backlog-item-check: issue mode, --body-file with no value: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --title t --body-file')" "use --body-file"
+check_msg "backlog-item-check: issue mode, a body file that names no item: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" "gh pr create --body-file $BIC_BB")" "names no item"
+check_msg "backlog-item-check: issue mode, a body file that does not exist: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" "gh pr create --body-file $TMPROOT/no-such-body.md")" "cannot read the body file"
+check_msg "backlog-item-check: issue mode, --body-file - (stdin): refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --body-file -')" "cannot read the body file"
+check_msg "backlog-item-check: issue mode, --body-file ~/x: refused, cannot tell which file" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --body-file ~/x.md')" "cannot tell which file"
+check_msg "backlog-item-check: issue mode, --body-file with a glob: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" "gh pr create --body-file $TMPROOT/bic-body-*.md")" "cannot tell which file"
+check_msg "backlog-item-check: issue mode, --body-file \$VAR: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_IS" 'gh pr create --body-file $F')" "cannot tell which file"
+check_nomsg "backlog-item-check: issue mode, gh pr merge passes (no local view of the body; documented)" "$BIC_HOOK" 0 "$(bic_sh "$BIC_IS" 'gh pr merge 5 --squash')" "BLOCKED"
+check_nomsg "backlog-item-check: issue mode, a non-create gh pr command is not read" "$BIC_HOOK" 0 "$(bic_sh "$BIC_IS" 'gh pr list --state open')" "BLOCKED"
+check_msg "backlog-item-check: an unparseable payload is refused" "$BIC_HOOK" 2 'this is not json' "BLOCKED"
+check_msg "backlog-item-check: a cwd that is not a git checkout is refused" "$BIC_HOOK" 2 "$(bic_create "$TMPROOT/tmp" feat main -)" "backlog-item-check"
+# ---- end v6.3 backlog-item-check
+
+# ---- v6.3 backlog discipline: hooks/backlog-brief.sh -- one line of backlog debt at every session start (advisory, exit 0).
+# File mode reads PROJECT_STATE.md; issue mode calls `gh issue list` under `timeout 3`, tested with a fake gh on a private PATH
+# (never a real network call). A PATH without gh is a directory of wrappers for just the tools the hook uses.
+echo "=== hooks/backlog-brief.sh (backlog discipline, session-start line) ==="
+BB_HOOK="$ROOT/hooks/backlog-brief.sh"
+BB_BASH=$(command -v bash)
+# A copied/linked MSYS tool outside /usr/bin cannot load msys-2.0.dll, so each tool on a private PATH is a
+# wrapper that execs the real one by absolute path (the v5.2.1 rm shape).
+bb_tool() { # <dir> <tool> -> <dir>/<tool>, a wrapper that execs the real tool by absolute path
+  local p; p=$(command -v "$2") || return 0
+  printf '#!%s\nexec "%s" "$@"\n' "$BASH" "$p" > "$1/$2"; chmod +x "$1/$2"
+}
+BB_TOOLS="$TMPROOT/bb-tools"; mkdir -p "$BB_TOOLS"
+for bb_t in grep sed awk head tr cat sleep timeout; do
+  bb_tool "$BB_TOOLS" "$bb_t"
+done
+BB_NOTO="$TMPROOT/bb-notimeout"; mkdir -p "$BB_NOTO"
+for bb_t in grep sed awk head tr cat sleep; do
+  bb_tool "$BB_NOTO" "$bb_t"
+done
+bb_run() { # <project dir> <source> [PATH] -> sets BB_OUT (stdout, trailing newline stripped) and BB_RC
+  BB_OUT=$(printf '{"hook_event_name":"SessionStart","source":"%s"}' "$2" | env CLAUDE_PROJECT_DIR="$1" PATH="${3:-$PATH}" "$BB_BASH" "$BB_HOOK" 2>/dev/null); BB_RC=$?
+}
+bb_expect() { # <label> <want stdout> <project dir> <source> [PATH] -- exit 0 is part of every assertion
+  bb_run "$3" "$4" "${5:-}"
+  expect "$1" "rc=0 out=$2" "rc=$BB_RC out=$BB_OUT"
+}
+bb_proj() { # <name> <Task source line value|-> <state file text|-> -> project dir
+  local d="$TMPROOT/bb-$1"; mkdir -p "$d"
+  if [ "$2" != "-" ]; then printf '# Ctx\n\n- **Task source**: %s\n' "$2" > "$d/PROJECT_CONTEXT.md"; fi
+  if [ "$3" != "-" ]; then printf '%b' "$3" > "$d/PROJECT_STATE.md"; fi
+  printf '%s\n' "$d"
+}
+BB_FULL='# State\n\n## Now\n\n- B-99 not a backlog item\n\n## Backlog\n\n### Untriaged\n\n- B-10 First untriaged\n- B-11 Second untriaged\n\n### Ranked\n\n- B-4 Fix the export\n- B-5 [in progress] Calendar time-zone fix\n- B-6 Third\n\n### Done\n\n- B-1 [in progress] done item with a stray tag\n- B-2 Old\n'
+BB_WANT='backlog: 2 untriaged, 1 in progress, top: B-4 Fix the export'
+BB_P1=$(bb_proj full '`plan-files`' "$BB_FULL")
+for bb_s in startup resume clear compact; do
+  bb_expect "backlog-brief: file mode, source $bb_s: 2 untriaged, 1 in progress, top B-4" "$BB_WANT" "$BB_P1" "$bb_s"
+done
+BB_P2=$(bb_proj plain 'plan-files' "$BB_FULL")
+bb_expect "backlog-brief: file mode, Task source without backticks" "$BB_WANT" "$BB_P2" startup
+BB_P3=$(bb_proj crlf '`plan-files`' "$BB_FULL")
+sed 's/$/\r/' "$BB_P3/PROJECT_STATE.md" > "$BB_P3/PROJECT_STATE.crlf" && mv "$BB_P3/PROJECT_STATE.crlf" "$BB_P3/PROJECT_STATE.md"
+bb_expect "backlog-brief: file mode, CRLF line endings" "$BB_WANT" "$BB_P3" startup
+BB_P4=$(bb_proj marker '`plan-files`' '## Backlog\n\n### Untriaged  \n\n* B-10 star bullet\n  - B-11 indented\n- B-x not an item\n- B-13\n\n### Ranked \n\n_none_\n\n### Done\n\n_none_\n')
+bb_expect "backlog-brief: file mode, star and indented bullets, a bare B-13, heading trailing spaces, empty Ranked: top none" \
+  "backlog: 3 untriaged, 0 in progress, top: none" "$BB_P4" startup
+BB_P5=$(bb_proj tagtop '`plan-files`' '## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-9 [in progress] Calendar fix\n- B-12 [in progress] Two\n\n### Done\n\n_none_\n')
+bb_expect "backlog-brief: file mode, the top item is in progress: shown without its tag, both counted" \
+  "backlog: 0 untriaged, 2 in progress, top: B-9 Calendar fix" "$BB_P5" startup
+BB_P6=$(bb_proj emptyall '`plan-files`' '## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n_none_\n\n### Done\n\n_none_\n')
+bb_expect "backlog-brief: file mode, every subsection empty" "backlog: 0 untriaged, 0 in progress, top: none" "$BB_P6" startup
+BB_P7=$(bb_proj bare '`plan-files`' '## Backlog\n\n### Untriaged\n\n- B-3 t\n\n### Ranked\n\n- B-7\n\n### Done\n')
+bb_expect "backlog-brief: file mode, a top item with no title" "backlog: 1 untriaged, 0 in progress, top: B-7" "$BB_P7" startup
+BB_HINT='backlog: PROJECT_STATE.md has no ### Untriaged/### Ranked/### Done -- see AGENT_TEAM.md § Backlog'
+BB_H1=$(bb_proj h-nobacklog '`plan-files`' '# State\n\n## Now\n\n- x\n')
+bb_expect "backlog-brief: file mode, no ## Backlog: the hint" "$BB_HINT" "$BB_H1" startup
+BB_H2=$(bb_proj h-none '`plan-files`' '# State\n\n## Backlog\n\n_none_\n')
+bb_expect "backlog-brief: file mode, ## Backlog without subsections: the hint" "$BB_HINT" "$BB_H2" compact
+BB_H3=$(bb_proj h-two '`plan-files`' '## Backlog\n\n### Untriaged\n\n- B-1 a\n\n### Ranked\n\n- B-2 b\n')
+bb_expect "backlog-brief: file mode, two of three subsections: the hint" "$BB_HINT" "$BB_H3" startup
+BB_H4=$(bb_proj h-outside '`plan-files`' '## Backlog\n\n### Untriaged\n\n- B-1 a\n\n### Ranked\n\n- B-2 b\n\n## Other\n\n### Done\n\n- B-3 c\n')
+bb_expect "backlog-brief: file mode, ### Done under another ## heading: the hint" "$BB_HINT" "$BB_H4" startup
+BB_N1=$(bb_proj nostate '`plan-files`' -)
+bb_expect "backlog-brief: file mode, no PROJECT_STATE.md: silent, exit 0" "" "$BB_N1" startup
+BB_N2=$(bb_proj nosource - "$BB_FULL")
+bb_expect "backlog-brief: no Task source line: silent, exit 0" "" "$BB_N2" startup
+BB_N3=$(bb_proj unknown 'jira' "$BB_FULL")
+bb_expect "backlog-brief: an unknown Task source: silent, exit 0" "" "$BB_N3" startup
+BB_N4=$(bb_proj empty '`plan-files`' '')
+bb_expect "backlog-brief: file mode, an empty PROJECT_STATE.md: the hint" "$BB_HINT" "$BB_N4" startup
+bb_run "$TMPROOT/bb-no-such-dir" startup
+expect "backlog-brief: a project dir that does not exist: silent, exit 0" "rc=0 out=" "rc=$BB_RC out=$BB_OUT"
+expect "backlog-brief: file mode needs no gh and no timeout (restricted PATH, the line is the same)" "rc=0 out=$BB_WANT" \
+  "$(bb_run "$BB_P1" startup "$BB_NOTO"; printf 'rc=%s out=%s' "$BB_RC" "$BB_OUT")"
+# the root is the guard's: the repo's top level, so a session started in a subdirectory still gets the line
+BB_G=$(bb_proj gitroot '`plan-files`' "$BB_FULL"); mkdir -p "$BB_G/sub/deep"; git -C "$BB_G" init -q >/dev/null 2>&1
+bb_expect "backlog-brief: a session started in a subdirectory of the repo still prints the line" "$BB_WANT" "$BB_G/sub/deep" startup
+bb_expect "backlog-brief: a session started at the repo root prints the same line" "$BB_WANT" "$BB_G" startup
+# the top title goes into the model context at every session start: control characters stripped, capped at 80 characters
+BB_C1=$(bb_proj ctrl '`plan-files`' '## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-4 red\033[31mtext\007bell\n\n### Done\n\n_none_\n')
+bb_expect "backlog-brief: control characters (ESC, BEL) in the top title are stripped" "backlog: 0 untriaged, 0 in progress, top: B-4 red[31mtextbell" "$BB_C1" startup
+BB_C4=$(bb_proj tabs '`plan-files`' '## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-1\t[in progress]\ttitle\twith tab\n\n### Done\n\n_none_\n')
+bb_expect "backlog-brief: tab-separated tag and title: the tag is dropped, the tabs become spaces" "backlog: 0 untriaged, 1 in progress, top: B-1 title with tab" "$BB_C4" startup
+BB_LONG=$(printf '%05000d' 0 | tr 0 x)
+BB_C2=$(bb_proj longtitle '`plan-files`' "## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-4 $BB_LONG\n\n### Done\n\n_none_\n")
+bb_expect "backlog-brief: a 5000-character top title is capped at 80 characters ending in ..." \
+  "backlog: 0 untriaged, 0 in progress, top: B-4 $(printf '%077d' 0 | tr 0 x)..." "$BB_C2" startup
+BB_C3=$(bb_proj title80 '`plan-files`' "## Backlog\n\n### Untriaged\n\n_none_\n\n### Ranked\n\n- B-4 $(printf '%080d' 0 | tr 0 x)\n\n### Done\n\n_none_\n")
+bb_expect "backlog-brief: a top title of exactly 80 characters is kept whole" \
+  "backlog: 0 untriaged, 0 in progress, top: B-4 $(printf '%080d' 0 | tr 0 x)" "$BB_C3" startup
+# issue mode: fake gh on a private PATH. It logs its arguments and prints the canned JSON.
+BB_FAKE="$TMPROOT/bb-fake"; mkdir -p "$BB_FAKE"
+for bb_t in grep sed awk head tr cat sleep timeout; do
+  bb_tool "$BB_FAKE" "$bb_t"
+done
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" > "%s/args"\ncat "%s/out"\nexit "$(cat "%s/rc")"\n' "$BB_FAKE" "$BB_FAKE" "$BB_FAKE" > "$BB_FAKE/gh"
+chmod +x "$BB_FAKE/gh"
+bb_gh() { printf '%s' "$1" > "$BB_FAKE/out"; printf '%s' "${2:-0}" > "$BB_FAKE/rc"; rm -f "$BB_FAKE/args"; } # <canned stdout> [exit code]
+BB_IS=$(bb_proj issue '`github-issues`' -)
+bb_expect "backlog-brief: issue mode, gh not on PATH: silent, exit 0" "" "$BB_IS" startup "$BB_TOOLS"
+bb_gh '[{"labels":[{"id":"L1","name":"priority:1","description":"","color":"fff"}]},{"labels":[{"id":"L2","name":"bug","description":"","color":"000"}]},{"labels":[]}]'
+bb_expect "backlog-brief: issue mode, 3 open and 1 with a priority label: 2 untriaged, 3 open" "backlog: 2 untriaged, 3 open" "$BB_IS" startup "$BB_FAKE"
+expect "backlog-brief: issue mode calls exactly 'issue list --state open --json labels --limit 200'" "issue list --state open --json labels --limit 200" "$(cat "$BB_FAKE/args" 2>/dev/null)"
+bb_expect "backlog-brief: issue mode, source compact gives the same line" "backlog: 2 untriaged, 3 open" "$BB_IS" compact "$BB_FAKE"
+bb_gh '[{"labels":[{"name":"priority:9"}]},{"labels":[{"name":"x"},{"name":"priority:3"}]}]'
+bb_expect "backlog-brief: issue mode, priority:9 is not a rank, priority:3 among other labels is" "backlog: 1 untriaged, 2 open" "$BB_IS" startup "$BB_FAKE"
+bb_gh '[
+  {
+    "labels": [
+      {
+        "name": "priority:2"
+      }
+    ]
+  },
+  {
+    "labels": []
+  }
+]'
+bb_expect "backlog-brief: issue mode, pretty-printed JSON" "backlog: 1 untriaged, 2 open" "$BB_IS" startup "$BB_FAKE"
+bb_gh '[]'
+bb_expect "backlog-brief: issue mode, no open issues" "backlog: 0 untriaged, 0 open" "$BB_IS" startup "$BB_FAKE"
+bb_gh '[{"labels":[]}]' 1
+bb_expect "backlog-brief: issue mode, gh exits 1: silent, exit 0" "" "$BB_IS" startup "$BB_FAKE"
+bb_gh 'gh: not logged in'
+bb_expect "backlog-brief: issue mode, gh prints something that is not a JSON list: silent, exit 0" "" "$BB_IS" startup "$BB_FAKE"
+bb_gh '[{"labels":[]}]'
+bb_expect "backlog-brief: issue mode, timeout missing: silent, exit 0" "" "$BB_IS" startup "$BB_NOTO"
+rm -f "$BB_FAKE/args"; ln -sf "$BB_FAKE/gh" "$BB_NOTO/gh"
+bb_expect "backlog-brief: issue mode, timeout missing but gh present: silent, exit 0" "" "$BB_IS" startup "$BB_NOTO"
+expect "backlog-brief: issue mode, timeout missing: gh was never called" "no" "$([ -e "$BB_FAKE/args" ] && echo yes || echo no)"
+printf '#!/bin/sh\nexec sleep 30\n' > "$BB_FAKE/gh"
+bb_expect "backlog-brief: issue mode, a gh that hangs is cut off by timeout 3: silent, exit 0" "" "$BB_IS" startup "$BB_FAKE"
+# ---- end v6.3 backlog-brief
+
+# ---- v7.0.0: sync-template's old-name warning (skills/sync-template/old-names.sh). It reports each pre-v7 part name that a
+# kept project file still carries, with the new name, and edits nothing. The expected map below is a SECOND, independent
+# copy of the script's own table, so a wrong or missing entry in the script reads red.
+ON="$ROOT/skills/sync-template/old-names.sh"
+ON_MAP='cct:dotnet-coder dotnet-tools:dotnet-coder
+cct:python-coder python-tools:python-coder
+cct:rust-coder rust-tools:rust-coder
+cct:java-coder java-tools:java-coder
+cct:retro-review cct-learning:retro-review
+cct:commit cct-helpers:commit
+cct:contribute-upstream cct-helpers:contribute-upstream
+cct:karpathy-guidelines cct-helpers:karpathy-guidelines
+cct:mcp-usage cct-helpers:mcp-usage
+cct:jev cct-jev:jev'
+on_sum() { ( cd "$1" && find . -type f | sort | xargs sha256sum ); }
+ON_P="$TMPROOT/on-old"; rm -rf "$ON_P"; mkdir -p "$ON_P/.claude/agents"
+printf 'use cct:dotnet-coder for the backend\n' > "$ON_P/.claude/agents/mine.md"
+printf '# p\nrun /cct:retro-review weekly\nand cct:commit then /cct:jev on\n' > "$ON_P/.claude/project-instructions.md"
+printf 'see cct:mcp-usage, cct:karpathy-guidelines and /cct:contribute-upstream\n' > "$ON_P/README.md"
+printf 'cct:python-coder cct:rust-coder cct:java-coder\n' > "$ON_P/CLAUDE.local.md"
+ON_B=$(on_sum "$ON_P")
+ON_OUT=$(bash "$ON" "$ON_P" 2>&1); ON_RC=$?
+expect "ON1 old names in kept files: exit 0" 0 "$ON_RC"
+expect "ON1 ... one report line per hit (ten names, ten hits)" 10 "$(printf '%s\n' "$ON_OUT" | grep -c .)"
+on_missing=""
+while read -r on_old on_new; do
+  [ "$(printf '%s\n' "$ON_OUT" | grep -cE ": $on_old -> $on_new( |\$)")" = 1 ] || on_missing="$on_missing $on_old"
+done <<EOF
+$ON_MAP
+EOF
+expect "ON1 ... every old name is reported once, with its new name" "" "$on_missing"
+expect "ON1 ... with the file and line it sits on" 1 "$(printf '%s\n' "$ON_OUT" | grep -c '^\.claude/project-instructions\.md:2: cct:retro-review -> cct-learning:retro-review')"
+expect "ON1 ... a name that needs a plugin says which" 1 "$(printf '%s\n' "$ON_OUT" | grep -c ': cct:jev -> cct-jev:jev .*cct-jev@dagonet')"
+expect "ON1 ... no file was changed" "$ON_B" "$(on_sum "$ON_P")"
+ON_N="$TMPROOT/on-new"; rm -rf "$ON_N"; mkdir -p "$ON_N/.claude/agents"
+printf 'use dotnet-tools:dotnet-coder, cct:coder and cct:Explore\n' > "$ON_N/.claude/agents/mine.md"
+printf 'run /cct-learning:retro-review, /cct-helpers:commit and /cct-jev:jev; /cct:sync-template\n' > "$ON_N/README.md"
+printf 'cct:commitment cct:commit-message xcct:commit cct:jevons cct:mcp-usages\n' > "$ON_N/CLAUDE.local.md"
+ON_OUT=$(bash "$ON" "$ON_N" 2>&1); ON_RC=$?
+expect "ON2 new names, kept names and look-alikes only: exit 0 and no output" "0:" "$ON_RC:$ON_OUT"
+ON_OUT=$(bash "$ON" "$TMPROOT/on-no-such-dir" 2>&1); ON_RC=$?
+expect "ON3 a directory that does not exist: exit 0 and no output" "0:" "$ON_RC:$ON_OUT"
+ON_S="$TMPROOT/on-skills"; rm -rf "$ON_S"; mkdir -p "$ON_S/.claude/skills/mine" "$ON_S/.claude/commands"
+printf '{"permissions":{"allow":["Skill(cct:commit)","Bash(ls)"]}}\n' > "$ON_S/.claude/settings.json"
+printf '{"permissions":{"allow":["Skill(cct:jev)"]}}\n' > "$ON_S/.claude/settings.local.json"
+printf '# mine\nuse cct:mcp-usage\n' > "$ON_S/.claude/skills/mine/SKILL.md"
+printf 'run cct:retro-review\n' > "$ON_S/.claude/commands/c.md"
+ON_B=$(on_sum "$ON_S")
+ON_OUT=$(bash "$ON" "$ON_S" 2>&1)
+expect "ON6 the project's own skills, commands and settings files: four hits" 4 "$(printf '%s\n' "$ON_OUT" | grep -c .)"
+expect "ON6 ... a Skill(cct:commit) permission line is reported with its new name" 1 "$(printf '%s\n' "$ON_OUT" | grep -c '^\.claude/settings\.json:1: cct:commit -> cct-helpers:commit ')"
+expect "ON6 ... so are settings.local.json, a skill file and a command file" "1:1:1" \
+  "$(printf '%s\n' "$ON_OUT" | grep -c '^\.claude/settings\.local\.json:1: cct:jev -> '):$(printf '%s\n' "$ON_OUT" | grep -c '^\.claude/skills/mine/SKILL\.md:2: cct:mcp-usage -> '):$(printf '%s\n' "$ON_OUT" | grep -c '^\.claude/commands/c\.md:1: cct:retro-review -> ')"
+expect "ON6 ... and nothing was changed" "$ON_B" "$(on_sum "$ON_S")"
+on_gone=""
+while read -r on_old on_new; do
+  on_pl=${on_new%%:*}; on_sk=${on_new#*:}
+  [ -d "$ROOT/plugins/$on_pl/skills/$on_sk" ] || [ -f "$ROOT/plugins/$on_pl/agents/$on_sk.md" ] || on_gone="$on_gone $on_new"
+done <<EOF
+$ON_MAP
+EOF
+expect "ON4 every new name in the map is a skill or agent the plugins ship" "" "$on_gone"
+expect "ON5 the sync-template skill runs the script" 1 "$([ "$(grep -c 'old-names\.sh' "$ROOT/skills/sync-template/SKILL.md")" -ge 1 ] && echo 1 || echo 0)"
+on_named=""
+while read -r on_old on_new; do
+  grep -qE "(^|[^A-Za-z0-9_-])$on_old([^A-Za-z0-9_-]|\$)" "$ROOT/skills/sync-template/SKILL.md" && on_named="$on_named $on_old"
+done <<EOF
+$ON_MAP
+EOF
+expect "ON5 ... and names no old part itself (the one exemption from check 76 is the script)" "" "$on_named"
+# ---- end v7.0.0 old-name warning
 
 echo "----------------------------------------------------------------"
 # The total is printed so a wrong `skip <n>` count is visible immediately: it

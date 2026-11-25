@@ -46,19 +46,70 @@ HOOK_PATH_RE = re.compile(r'hooks[/\\]([A-Za-z0-9._-]+?)\.sh')
 HOOK_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
 WRAPPER_HOOKS = {'dispatch', 'run-hook'}  # the plugin's launchers: the hook they run is not in their path
 BLOCKED_RE = re.compile(r'BLOCKED: (\S+)')
+BLOCKED_TEXT_RE = re.compile(r'BLOCKED: ([^"\'$`\\(\r\n]+)')  # the literal start of a refusal text in a hook
+COMMAND_RE = re.compile(r'<command-name>/([A-Za-z0-9._-]+:[A-Za-z0-9._-]+)</command-name>')
+MIN_PREFIX = 12  # a shorter prefix would match too much
+# Texts the plugin's launcher prints when it cannot start a hook; they are not in a hooks/*.sh file.
+DISPATCH_REFUSALS = ('cct plugin files are missing', 'bash not found on PATH')
 UNATTRIBUTED = '<unattributed>'
 MAX_COUNT = 10 ** 15  # a usage field above this is garbage and counts as 0
 CORRECTION_RE = re.compile(
     r"^(no\b|nope\b|don['’]?t\b|do not\b|stop\b|wrong\b|that['’]?s (not|wrong)\b|not what\b|i said\b"
     r"|i told you\b|why did you\b|you (forgot|missed|didn['’]?t)\b)", re.IGNORECASE)
 CORRECTION_CHARS = 300
+# The step-up note the hook agent-result-notes.sh adds to the parent's context, one of two fixed forms:
+#   Step-up: <type> failed on <model> (<reason>). Start the same job again on <next model>.
+#   Step-up: <type> failed on fable (<reason>). Report this to the user instead of retrying.
+# Only the type and the two models are read; the reason is never kept.
+STEP_UP_RE = re.compile(r'Step-up: (\S+) failed on (\S+) \(.*?\)\. (?:Start the same job again on ([^\s.]+)\.'
+                        r'|Report this to the user instead of retrying\.)')
+HOOK_CONTEXT = 'hook_additional_context'  # the attachment type of a hook's additionalContext row
+LADDER = ('haiku', 'sonnet', 'opus', 'fable')  # the model names the note carries
+USER = 'user'  # the `<to>` of the top-rung form
 OTHER = 'other'
 NOTE_KINDS = ('helped', 'recurring_failure', 'rule_unused')
+# Backlog discipline (hooks/backlog-item-check.sh). `backlog_refusals` keys are `<mode>/<reason>`, both from
+# these fixed lists, and only the count of each is kept, never the refusal text. The text never names the mode;
+# it is read from the code path that prints the text: bic_refs and bic_file_ok run only on the file-mode branch of
+# bic_judge, bic_body_ok only on the issue-mode one. A text printed before the mode is known, or in both modes
+# (the body-file texts, `Task source`, not inside a checkout), has mode `other`. The reason comes from the first
+# fixed substring of the hook's own refusal text that the result holds, else `other`.
+BACKLOG_HOOK = 'backlog-item-check'
+BACKLOG_MODES = ('file', 'issue', OTHER)
+BACKLOG_REASONS = ('no-item', 'body-unreadable', 'no-subsections', 'wrong-checkout', 'not-pushed', 'no-base', 'mode', OTHER)
+BACKLOG_REFUSALS = (  # (substring of the hook's refusal text, mode, reason); the first one found wins
+    ('this PR moves no backlog item', 'file', 'no-item'),
+    ('the PR body names no item', 'issue', 'no-item'),
+    ('with the subsections ### Untriaged', 'file', 'no-subsections'),
+    ('cannot read the body file', OTHER, 'body-unreadable'),
+    ('the body of this gh pr create cannot be read', OTHER, 'body-unreadable'),
+    ('this check cannot tell which file it is', OTHER, 'body-unreadable'),
+    ('is not equal to refs/remotes/origin/', 'file', 'not-pushed'),
+    ('no base branch given', 'file', 'no-base'),
+    ('such as ~ or @{}): pass --base', 'file', 'no-base'),
+    ('does not exist locally: fetch first', 'file', 'no-base'),
+    ('such as ~ or @{}): run from the PR', 'file', 'wrong-checkout'),
+    ('this checkout is on', 'file', 'wrong-checkout'),
+    ('is on a detached HEAD', 'file', 'wrong-checkout'),
+    ('cannot read the diff of HEAD', 'file', 'wrong-checkout'),
+    ('cannot read the commits of', 'file', 'wrong-checkout'),
+    ('is not inside a git checkout', OTHER, 'wrong-checkout'),
+    ('has no usable', OTHER, 'mode'),
+)
+# `Item: none` as a line of its own (a commit message or heredoc, optionally closed by a quote), as the last line
+# of a quoted -m text that starts with it, or as a quoted -m text of its own.
+ITEM_NONE_RE = re.compile(r'(?m)^[ \t]*Item: none[ \t]*["\']?[ \t]*\r?$|["\']Item: none(?:["\']|[ \t]*\r?$)')
+ITEM_NONE_LINE_RE = re.compile(r'(?m)^Item: none\r?$')  # a PR body: the line, as the hook reads it
+GIT_COMMIT_RE = re.compile(r'\bgit\b[^\n]*\bcommit\b')
+SHELL_TOOLS = {'Bash', 'PowerShell'}
+CREATE_PR_TOOL = 'mcp__MCP_DOCKER__create_pull_request'
+FOLLOWUP_TYPES = {'cct:code-reviewer', 'code-reviewer', 'cct:tester', 'tester'}  # the agents whose report may carry a block
 # The shared JSON keys merge() handles: the header ones are not table rows. The self-test fails when
 # count() writes a key outside these, so a new measure cannot silently miss the merged table.
 HEADER_KEYS = {'schema', 'machine', 'since', 'until', 'claude_code_versions'}
-MEASURE_KEYS = {'spawns', 'tokens_by_model', 'token_share', 'toolkit_use', 'hook_blocks', 'correction_candidates',
-                'correction_kinds', 'notes', 'notes_malformed', 'jev', 'unreadable_files'}
+MEASURE_KEYS = {'spawns', 'start_models', 'step_ups', 'tokens_by_model', 'token_share', 'toolkit_use', 'hook_blocks', 'correction_candidates',
+                'correction_kinds', 'notes', 'notes_malformed', 'jev', 'unreadable_files',
+                'backlog_item_none', 'backlog_refusals', 'followups'}
 SURFACE_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:+-]{0,63}')  # a name, never a path
 
 
@@ -96,11 +147,22 @@ def default_machine(system, id_path):
 
 
 def toolkit_name(called, names):
-    """The bare toolkit name behind a call, or None. Only `cct:<name>` is the toolkit's: a bare name
-    may be a Claude Code built-in (Explore) or another plugin's."""
-    if isinstance(called, str) and called.startswith(PLUGIN_PREFIX) and called[len(PLUGIN_PREFIX):] in names:
-        return called[len(PLUGIN_PREFIX):]
-    return None
+    """The toolkit name behind a call, or None. `cct:<name>` is the toolkit's (the bare name comes back);
+    so is `<plugin>:<name>` when the repo's own plugins/<plugin>/agents/<name>.md or
+    plugins/<plugin>/skills/<name>/ holds it (the qualified name comes back, as toolkit_names lists it).
+    A bare name may be a Claude Code built-in (Explore) or another plugin's."""
+    if not isinstance(called, str):
+        return None
+    if called.startswith(PLUGIN_PREFIX):
+        return called[len(PLUGIN_PREFIX):] if called[len(PLUGIN_PREFIX):] in names else None
+    return called if ':' in called and called in names else None
+
+
+def command_name(typed):
+    """The `<plugin>:<name>` of a `/<plugin>:<name>` command row, or None. Whether it is a toolkit skill is
+    for toolkit_name to say: only names the repo's own files hold count."""
+    hit = COMMAND_RE.search(typed)
+    return hit.group(1) if hit else None
 
 
 def num(value):
@@ -121,6 +183,12 @@ def norm_model(model):
     return name if MODEL_ALLOWED_RE.fullmatch(name) else 'other-model'
 
 
+def ladder_model(name, allowed=LADDER):
+    """A model name from a step-up note when it is on the ladder (or in `allowed`), else the
+    norm_model answer ('other-model' for anything that is not a known `claude-...` name)."""
+    return name if name in allowed else norm_model(name)
+
+
 def cut_text(text):
     return text[:CORRECTION_CHARS]
 
@@ -130,7 +198,9 @@ def in_window(day, since, until):
 
 
 def toolkit_names(toolkit_root):
-    """-> (skill names, agent names) the toolkit ships, from its skills/ dirs and agents/*.md."""
+    """-> (skill names, agent names) the toolkit ships, from its skills/ dirs and agents/*.md (bare names),
+    plugins/<plugin>/skills/<name>/ and plugins/<plugin>/agents/*.md (listed as `<plugin>:<name>`, the
+    plugin being the folder name)."""
     skills_dir, agents_dir = os.path.join(toolkit_root, 'skills'), os.path.join(toolkit_root, 'agents')
     skills = []
     agents = []
@@ -138,12 +208,18 @@ def toolkit_names(toolkit_root):
         skills = [n for n in os.listdir(skills_dir) if os.path.isdir(os.path.join(skills_dir, n))]
     if os.path.isdir(agents_dir):
         agents = [n[:-len('.md')] for n in os.listdir(agents_dir) if n.endswith('.md')]
+    for path in glob.glob(os.path.join(toolkit_root, 'plugins', '*', 'skills', '*', '')):
+        parts = os.path.normpath(path).split(os.sep)
+        skills.append('%s:%s' % (parts[-3], parts[-1]))
+    for path in glob.glob(os.path.join(toolkit_root, 'plugins', '*', 'agents', '*.md')):
+        plugin = os.path.basename(os.path.dirname(os.path.dirname(path)))
+        agents.append('%s:%s' % (plugin, os.path.basename(path)[:-len('.md')]))
     return sorted(skills), sorted(agents)
 
 
 def user_parts(msg):
-    """-> (typed text or None, [(is_error, tool result text)]) of a user message. A message holding
-    any tool result is not typed by the user."""
+    """-> (typed text or None, [(is_error, tool result text, tool_use_id or None)]) of a user message.
+    A message holding any tool result is not typed by the user."""
     content = msg.get('content')
     if isinstance(content, str):
         return content, []
@@ -155,22 +231,57 @@ def user_parts(msg):
         inner = b.get('content')
         if isinstance(inner, list):
             inner = '\n'.join(x['text'] for x in inner if isinstance(x, dict) and isinstance(x.get('text'), str))
-        results.append((b.get('is_error') is True, inner if isinstance(inner, str) else ''))
+        use_id = b.get('tool_use_id')
+        results.append((b.get('is_error') is True, inner if isinstance(inner, str) else '',
+                        use_id if isinstance(use_id, str) else None))
     if results:
         return None, results
     texts = [b['text'] for b in blocks if b.get('type') == 'text' and isinstance(b.get('text'), str)]
     return ('\n'.join(texts) if texts else None), []
 
 
-def block_hook(text, is_error):
+def hook_token(token):
+    """A `BLOCKED:` token as a hook name: lower-cased, without a trailing `:` or `.sh`."""
+    name = token.lower()
+    name = name[:-1] if name.endswith(':') else name
+    return name[:-len('.sh')] if name.endswith('.sh') else name
+
+
+def refusal_table(toolkit_root, hook_names):
+    """-> [(prefix, hook)], longest prefix first: the toolkit's own refusal texts that do not start with
+    a hook name, from the `BLOCKED: ` strings in hooks/*.sh (the hook is the file) and hooks/hooks.json
+    (the hook is `dispatch`), plus DISPATCH_REFUSALS. The prefix is the literal text after `BLOCKED: `
+    up to the first quote, `$`, backtick, backslash or `(`, and up to the end of its first sentence.
+    A prefix found in two hooks maps to `other`."""
+    found = {p: {'dispatch'} for p in DISPATCH_REFUSALS}
+    paths = [(p, os.path.basename(p)[:-len('.sh')]) for p in glob.glob(os.path.join(toolkit_root, 'hooks', '*.sh'))]
+    paths.append((os.path.join(toolkit_root, 'hooks', 'hooks.json'), 'dispatch'))
+    for path, hook in paths:
+        try:
+            with open(path, encoding='utf-8', errors='replace') as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        for hit in BLOCKED_TEXT_RE.finditer(text):
+            prefix = hit.group(1).strip()
+            sentence = re.match(r'(.*?\.)(?:\s|$)', prefix)  # the first sentence, when it ends inside
+            prefix = sentence.group(1) if sentence else prefix
+            if len(prefix) >= MIN_PREFIX and hook_token(prefix.split()[0]) not in hook_names:
+                found.setdefault(prefix, set()).add(hook)
+    table = [(p, next(iter(h)) if len(h) == 1 else OTHER) for p, h in found.items()]
+    return sorted(table, key=lambda e: (-len(e[0]), e[0]))
+
+
+def block_hook(text, is_error, refusals=()):
     """The hook behind a real hook denial, else None.
 
     A denial is an error tool result that starts `PreToolUse:` and has `hook error:` in its first 200
     characters; a result that only quotes `BLOCKED:` is not one. The hook is the first `hooks/<name>.sh`
-    in the bracketed command, else the token after the first `BLOCKED: ` that follows it (lower-cased,
-    without a trailing `:` or `.sh`), else `<unattributed>`. The plugin's launchers `dispatch.sh` and
+    in the bracketed command, else the hook of the first `refusals` prefix (see refusal_table) the text
+    after the first `BLOCKED: ` starts with, else its first token (lower-cased, without a trailing `:`
+    or `.sh`), else `<unattributed>`. The plugin's launchers `dispatch.sh` and
     `run-hook.sh` are not the hook: for `run-hook.sh <name>` the hook is the command's last word, else
-    (and for `dispatch.sh`) the `BLOCKED:` token decides.
+    (and for `dispatch.sh`) the `BLOCKED:` text decides.
     """
     if is_error is not True or not text.startswith('PreToolUse:') or 'hook error:' not in text[:200]:
         return None
@@ -185,10 +296,39 @@ def block_hook(text, is_error):
     hit = BLOCKED_RE.search(tail)
     if not hit:
         return UNATTRIBUTED
-    name = hit.group(1).lower()
-    name = name[:-1] if name.endswith(':') else name
-    name = name[:-len('.sh')] if name.endswith('.sh') else name
-    return name or UNATTRIBUTED
+    rest = tail[hit.start() + len('BLOCKED: '):]
+    for prefix, hook in refusals:
+        if rest.startswith(prefix):
+            return hook
+    return hook_token(hit.group(1)) or UNATTRIBUTED
+
+
+def backlog_refusal(text):
+    """The `<mode>/<reason>` key of a backlog-item-check refusal text (see BACKLOG_REFUSALS), `<mode>/other`
+    when no fixed substring matches. Only the key leaves this function, never the text."""
+    for needle, mode, reason in BACKLOG_REFUSALS:
+        if needle in text:
+            return '%s/%s' % (mode, reason)
+    return '%s/%s' % (OTHER, OTHER)
+
+
+def has_followups(text):
+    """True when the text holds a line exactly `Follow-ups:` followed at once by a line starting `- `
+    (the block hooks/agent-result-notes.sh looks for)."""
+    lines = text.replace('\r', '').split('\n')
+    return any(a == 'Follow-ups:' and b.startswith('- ') for a, b in zip(lines, lines[1:]))
+
+
+def item_none(name, inp):
+    """True when one tool call carries the trailer `Item: none`: a create_pull_request body with the line
+    exactly, or a Bash/PowerShell `git commit` command whose text holds it (a -m text or a heredoc). A commit
+    made with -F <file> and a PR made with --body-file keep their text out of the transcript: not counted."""
+    if name == CREATE_PR_TOOL:
+        body = inp.get('body')
+        return isinstance(body, str) and ITEM_NONE_LINE_RE.search(body) is not None
+    command = inp.get('command')
+    return name in SHELL_TOOLS and isinstance(command, str) and GIT_COMMIT_RE.search(command) is not None \
+        and ITEM_NONE_RE.search(command) is not None
 
 
 def correction_text(typed):
@@ -197,22 +337,61 @@ def correction_text(typed):
     return text if text and not text.startswith('<') and CORRECTION_RE.match(text) else None
 
 
-def scan(rows, since, until):
+def assistant_text(msg):
+    """The text blocks of an assistant message, joined (a plain string content is the text), or ''."""
+    content = msg.get('content')
+    if isinstance(content, str):
+        return content
+    return '\n'.join(b['text'] for b in content if isinstance(b, dict) and b.get('type') == 'text'
+                     and isinstance(b.get('text'), str)) if isinstance(content, list) else ''
+
+
+def walk_strings(value, depth=0):
+    """Every string inside a parsed JSON value that holds a step-up note."""
+    if isinstance(value, str):
+        if 'Step-up: ' in value:
+            yield value
+    elif depth < 12:
+        for item in value.values() if isinstance(value, dict) else value if isinstance(value, list) else ():
+            yield from walk_strings(item, depth + 1)
+
+
+def scan(rows, since, until, refusals=(), step_ups=False):
     """Reduce one transcript to what counts inside the window.
 
     -> dict: first_day (of the first timestamped row, in or out of the window), first_model (first
     non-synthetic model in the whole transcript) or None, and, for in-window rows only:
     versions {v: n}, usage {message id: (model, {field: n})}, calls [(tool name, input)],
+    commands [`<plugin>:<name>` of each `/<plugin>:<name>` command row, once per row],
     blocks [attributed hook name of each real hook denial, see block_hook],
-    corrections [(timestamp, text) of each typed user turn that reads as a correction].
+    corrections [(timestamp, text) of each typed user turn that reads as a correction and does not
+    answer a question: the latest assistant text before it does not end in `?`],
+    step_ups [(type, from model, to model or None) of each step-up note, see STEP_UP_RE], only when
+    `step_ups` is set (a main transcript), and only from the strings of an in-window `attachment` row
+    of type HOOK_CONTEXT, where a hook's additional context lands: the same text in a tool result
+    (a file read, a command's output), in typed text or in an assistant's words is a quote.
     A message split over several rows repeats its usage, so usage is kept once per message id.
+    backlog [`<mode>/<reason>` of each real denial by hooks/backlog-item-check.sh, see backlog_refusal],
+    followups [the number of Agent results, from a reviewer or tester call, that hold a non-empty
+    `Follow-ups:` block]. Both are counts: no refusal or report text is kept.
     """
     out = {'first_day': None, 'first_model': None, 'versions': {}, 'usage': {}, 'calls': [],
-           'blocks': [], 'corrections': []}
+           'commands': [], 'blocks': [], 'corrections': [], 'step_ups': [], 'backlog': [], 'followups': 0}
+    asked = False  # the latest assistant text, in or out of the window, ends in a question mark
+    spawned = {}  # tool_use id -> subagent_type of each Agent call seen so far, in or out of the window
     for i, row in enumerate(rows):
         msg = row.get('message')
         model = None
+        content = msg.get('content') if isinstance(msg, dict) else None
         if isinstance(msg, dict) and row.get('type') == 'assistant':
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('name') in AGENT_TOOLS \
+                        and isinstance(block.get('id'), str) and isinstance(block.get('input'), dict) \
+                        and isinstance(block['input'].get('subagent_type'), str):
+                    spawned[block['id']] = block['input']['subagent_type']
+            said = assistant_text(msg).rstrip()
+            if said:
+                asked = said.endswith('?')
             model = msg.get('model') if isinstance(msg.get('model'), str) else None
             if model == SYNTHETIC:
                 model = None
@@ -235,13 +414,23 @@ def scan(rows, since, until):
             out['versions'][version] = out['versions'].get(version, 0) + 1
         if isinstance(msg, dict) and row.get('type') == 'user':
             typed, results = user_parts(msg)
-            for is_error, text in results:
-                hook = block_hook(text, is_error)
+            for is_error, text, use_id in results:
+                hook = block_hook(text, is_error, refusals)
                 if hook:
                     out['blocks'].append(hook)
-            text = None if row.get('isMeta') else correction_text(typed)
+                if hook == BACKLOG_HOOK:
+                    out['backlog'].append(backlog_refusal(text))
+                if spawned.get(use_id) in FOLLOWUP_TYPES and has_followups(text):
+                    out['followups'] += 1
+            command = command_name(typed) if typed else None
+            if command:
+                out['commands'].append(command)
+            text = None if row.get('isMeta') or asked else correction_text(typed)
             if text:
                 out['corrections'].append((row['timestamp'] if isinstance(row.get('timestamp'), str) else '', text))
+        attached = row.get('attachment') if row.get('type') == 'attachment' else None
+        if step_ups and isinstance(attached, dict) and attached.get('type') == HOOK_CONTEXT:
+            out['step_ups'] += [hit.groups() for text in walk_strings(attached) for hit in STEP_UP_RE.finditer(text)]
         if not isinstance(msg, dict) or row.get('type') != 'assistant':
             continue
         usage = msg.get('usage')
@@ -271,9 +460,13 @@ def agent_type_of(sub_path, agent_names):
         return 'unknown', 'unknown'
     if not isinstance(name, str) or not name:
         return 'unknown', 'unknown'
-    if name in BUILTIN_AGENTS or toolkit_name(name, agent_names):
-        return name, name
-    return 'other', name
+    return type_key(name, agent_names), name
+
+
+def type_key(name, agent_names):
+    """The shared key of an agent type: a toolkit agent (`cct:<name>` or a repo-held `<plugin>:<name>`) or a built-in passes through,
+    anything else is 'other'."""
+    return name if name in BUILTIN_AGENTS or toolkit_name(name, agent_names) else OTHER
 
 
 def _zero():
@@ -387,10 +580,12 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
     clone roots. -> (shared, local)."""
     skill_names, agent_names = toolkit_names(toolkit_root)
     use = {'skills': {n: 0 for n in skill_names}, 'agents': {n: 0 for n in agent_names}}
-    versions, spawns, by_model, per_project = {}, {}, {}, {}
+    versions, spawns, by_model, per_project, step_ups = {}, {}, {}, {}, {}
     share = {'main': _zero(), 'sub': _zero()}
     hook_names = toolkit_hooks(toolkit_root)
+    refusals = refusal_table(toolkit_root, hook_names)
     hook_blocks, local_hooks, corrections = {}, {}, []
+    backlog_refusals, backlog_item_none, followups = {}, 0, 0
     unreadable = 0
     clone_roots = list(dict.fromkeys(os.path.realpath(os.path.expanduser(r)) for r in clone_roots))
     for slug in sorted(os.listdir(projects_root)):
@@ -406,7 +601,7 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
             except OSError:
                 unreadable += 1
                 continue
-            s = scan(rows, since, until)
+            s = scan(rows, since, until, refusals, step_ups=not is_sub)
             for v, n in s['versions'].items():
                 versions[v] = versions.get(v, 0) + n
             for model, tok in s['usage'].values():
@@ -419,8 +614,20 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
                 key = hook if hook in hook_names else OTHER  # a project's own hook name stays local
                 hook_blocks[key] = hook_blocks.get(key, 0) + 1
                 local_hooks[hook] = local_hooks.get(hook, 0) + 1
+            for key in s['backlog']:  # main and subagent transcripts alike: a denial or a trailer is in the one that made it
+                backlog_refusals[key] = backlog_refusals.get(key, 0) + 1
+            followups += s['followups']
+            backlog_item_none += sum(item_none(name, inp) for name, inp in s['calls'])
             if not is_sub:  # a subagent's user rows are its parent's prompts, not the user's words
                 corrections += [{'project': slug, 'ts': ts, 'text': cut_text(text)} for ts, text in s['corrections']]
+            for kind, was, then in s['step_ups']:
+                move = '%s->%s' % (ladder_model(was), ladder_model(then or USER, LADDER + (USER,)))
+                by_move = step_ups.setdefault(type_key(kind, agent_names), {})
+                by_move[move] = by_move.get(move, 0) + 1
+            for skill in [] if is_sub else s['commands']:  # a `/<plugin>:<skill>` row starts the skill like a Skill call
+                key = toolkit_name(skill, use['skills'])
+                if key:
+                    use['skills'][key] += 1
             for name, inp in s['calls']:
                 if name == 'Skill':
                     called, names = inp.get('skill'), use['skills']
@@ -442,8 +649,10 @@ def count(projects_root, clone_roots, toolkit_root, since, until, machine):
     known = toolkit_surfaces(toolkit_root, skill_names, agent_names, hook_names)
     notes, local_notes, notes_malformed, notes_unreadable = read_notes(clone_roots, known, since, until)
     shared = {'schema': SCHEMA, 'machine': machine, 'since': since, 'until': until,
-              'claude_code_versions': versions, 'spawns': spawns, 'tokens_by_model': by_model,
+              'claude_code_versions': versions, 'spawns': spawns, 'start_models': spawns, 'step_ups': step_ups,
+              'tokens_by_model': by_model,
               'token_share': share, 'toolkit_use': use, 'hook_blocks': hook_blocks,
+              'backlog_item_none': backlog_item_none, 'backlog_refusals': backlog_refusals, 'followups': followups,
               'correction_candidates': len(corrections), 'notes': notes, 'notes_malformed': notes_malformed,
               'jev': jev_counts(clone_roots, since, until), 'unreadable_files': unreadable + notes_unreadable}
     return shared, {'per_project': per_project, 'corrections': corrections, 'notes': local_notes,
@@ -486,7 +695,11 @@ def leak_probes(shared, local):
             ('corp.example', 'a gateway host name in a model string', False),
             ('secretproject', 'a project name in a model string', False),
             ('acme', 'a project name after a model family', False),
-            ('internal', 'a word after a model name', False)):
+            ('internal', 'a word after a model name', False),
+            ('ZZ-COMMIT-MARKER-5e1b', 'a commit message', False),
+            ('ZZ-PRBODY-MARKER-9a4e', 'a PR body', False),
+            ('ZZ-FOLLOWUP-MARKER-8d2c', 'a follow-up item', False),
+            ('ZZ-REFUSAL-MARKER-3b7a', 'the tail of a refusal text', False)):
         if needle in flat_shared:
             bad.append('/shared: %s leaked (%r)' % (what, needle))
         if in_local and needle not in flat_local:
@@ -514,9 +727,20 @@ def measures(data):
     def safe_model(model):  # a file may come from an older or hand-made run: never trust its model keys
         return model if model == 'unknown' else norm_model(model)
 
-    for kind, by_model in _dict(data.get('spawns')).items():
+    def safe_move(move):  # `<from>-><to>`: each side on the ladder (`to` may be `user`), else other-model
+        sides = move.split('->') if isinstance(move, str) else []
+        if len(sides) != 2:
+            return 'other-model->other-model'
+        return '%s->%s' % (ladder_model(sides[0]), ladder_model(sides[1], LADDER + (USER,)))
+
+    # `spawns` is the older name of `start_models`: a file that has both is counted once, under the new name.
+    starts = data['start_models'] if 'start_models' in data else data.get('spawns')
+    for kind, by_model in _dict(starts).items():
         for model, n in _dict(by_model).items():
-            add('spawns %s %s' % (kind, safe_model(model)), n)
+            add('start_models %s %s' % (kind, safe_model(model)), n)
+    for kind, by_move in _dict(data.get('step_ups')).items():
+        for move, n in _dict(by_move).items():
+            add('step_ups %s %s' % (kind, safe_move(move)), n)
     for model, by_field in _dict(data.get('tokens_by_model')).items():
         for field, n in _dict(by_field).items():
             add('tokens %s %s' % (safe_model(model), field), n)
@@ -526,8 +750,13 @@ def measures(data):
     for key in ('hook_blocks', 'jev'):
         for name, n in _dict(data.get(key)).items():
             rows['%s %s' % (key, name)] = num(n)
-    for key in ('correction_candidates', 'notes_malformed', 'unreadable_files'):
+    for key in ('correction_candidates', 'notes_malformed', 'unreadable_files', 'backlog_item_none', 'followups'):
         rows[key] = num(data.get(key))
+    for key, n in _dict(data.get('backlog_refusals')).items():  # a hand-made file: only listed modes and reasons
+        sides = key.split('/') if isinstance(key, str) else []
+        mode, reason = sides if len(sides) == 2 else (OTHER, OTHER)
+        add('backlog_refusals %s/%s' % (mode if mode in BACKLOG_MODES else OTHER,
+                                         reason if reason in BACKLOG_REASONS else OTHER), n)
     kinds = data.get('correction_kinds')
     for item in kinds if isinstance(kinds, list) else []:
         if isinstance(item, dict) and isinstance(item.get('kind'), str):
@@ -695,14 +924,31 @@ def merge_checks():
             leaky['tokens_by_model'] = {'other-model': {'input': 1, 'cache_read': 0, 'output': 0},
                                         'claude-gateway.corp.example.com': {'input': 2, 'cache_read': 0, 'output': 0},
                                         'claude-opus-5-5[1m]': {'input': 4, 'cache_read': 0, 'output': 0}}
-            leaky['spawns'] = {'cct:coder': {'claude-gateway.corp.example.com': 3, 'other-model': 1, 'unknown': 5}}
+            leaky['start_models'] = {'cct:coder': {'claude-gateway.corp.example.com': 3, 'other-model': 1, 'unknown': 5}}
+            leaky['step_ups'] = {'cct:coder': {'claude-gateway.corp.example.com->opus': 2, 'sonnet->user': 1,
+                                               'sonnet->corp.example.com': 1, 'not a move': 1}}
             write_json(os.path.join(tmp, 'a.json'), leaky)
             got = merge(inbox_paths(tmp))
             if 'corp.example' in got or '| tokens other-model input | 3 | 3 |' not in got \
                     or '| tokens claude-opus-5-5 input | 4 | 4 |' not in got \
-                    or '| spawns cct:coder other-model | 4 | 4 |' not in got \
-                    or '| spawns cct:coder unknown | 5 | 5 |' not in got:
+                    or '| start_models cct:coder other-model | 4 | 4 |' not in got \
+                    or '| start_models cct:coder unknown | 5 | 5 |' not in got:
                 bad.append('/merge: a model key is not normalised and summed, or a host name reaches the table')
+            if '| step_ups cct:coder other-model->opus | 2 | 2 |' not in got \
+                    or '| step_ups cct:coder sonnet->user | 1 | 1 |' not in got \
+                    or '| step_ups cct:coder sonnet->other-model | 1 | 1 |' not in got \
+                    or '| step_ups cct:coder other-model->other-model | 1 | 1 |' not in got:
+                bad.append('/merge: a step-up move is not normalised, or a host name or a free text reaches the table')
+            leaky['backlog_refusals'] = {'file/no-item': 2, 'issue/no-item': 1, 'corp.example/no-item': 1,
+                                         'file/ZZ-free-text': 3, 'plain': 1, 'a/b/c': 2}
+            write_json(os.path.join(tmp, 'a.json'), leaky)
+            got = merge(inbox_paths(tmp))
+            if 'corp.example' in got or 'ZZ-free-text' in got or '| backlog_refusals file/no-item | 2 | 2 |' not in got \
+                    or '| backlog_refusals issue/no-item | 1 | 1 |' not in got \
+                    or '| backlog_refusals other/no-item | 1 | 1 |' not in got \
+                    or '| backlog_refusals file/other | 3 | 3 |' not in got \
+                    or '| backlog_refusals other/other | 3 | 3 |' not in got:
+                bad.append('/merge: a backlog refusal key is not normalised and summed, or a free text reaches the table')
     except Exception as exc:  # a crash must read as a failed test, not a traceback
         bad.append('/merge: exception %s: %s' % (type(exc).__name__, exc))
     return bad
@@ -757,22 +1003,65 @@ def self_test():
         bad.append('/merge: toolkit_use has keys merge() does not handle: %s' % sorted(set(shared['toolkit_use'])))
     # compare() ignores keys the expectation lacks; these maps must hold exactly the expected keys,
     # all the way down (so "one model per spawn" is pinned too).
-    for key in ('claude_code_versions', 'spawns', 'tokens_by_model', 'toolkit_use', 'hook_blocks', 'notes', 'jev'):
+    for key in ('claude_code_versions', 'spawns', 'start_models', 'step_ups', 'tokens_by_model', 'toolkit_use', 'hook_blocks',
+                'backlog_refusals', 'notes', 'jev'):
         bad += key_diffs(shared.get(key), expected[key], '/' + key)
     want_local = {'-home-u-git-alpha': {'spawns': {'cct:coder': 1, 'Explore': 1, 'alpha-db-expert': 1, 'unknown': 2},
                                         'tokens': 9127}}
     if local['per_project'] != want_local:
         bad.append('/per_project: got %s' % local['per_project'])
     bad += leak_probes(shared, local)
+    # v7.0.0: a language plugin's agent counts by `<plugin>:<name>` (the plugin is the folder under plugins/);
+    # a name the repo's own files do not hold stays 'other'.
+    fixture_agents = toolkit_names(os.path.join(FIXTURES, 'toolkit'))[1]
+    for want, got, what in (
+            ('dotnet-tools:dotnet-coder', toolkit_name('dotnet-tools:dotnet-coder', fixture_agents), 'a plugin agent the files hold'),
+            (None, toolkit_name('foo-tools:foo-coder', fixture_agents), 'an unknown plugin agent'),
+            (None, toolkit_name('dotnet-tools:other-agent', fixture_agents), 'another agent of a known plugin'),
+            (None, toolkit_name('cct:dotnet-coder', fixture_agents), 'the old cct: name of a moved coder'),
+            (None, toolkit_name('dotnet-coder', fixture_agents), 'the bare name of a plugin agent'),
+            ('coder', toolkit_name('cct:coder', fixture_agents), 'a core agent'),
+            ('dotnet-tools:dotnet-coder', type_key('dotnet-tools:dotnet-coder', fixture_agents), 'a plugin agent as a spawn type'),
+            (OTHER, type_key('foo-tools:foo-coder', fixture_agents), 'an unknown plugin agent as a spawn type')):
+        if got != want:
+            bad.append('/plugin agents: %s: want %r, got %r' % (what, want, got))
+    # v6.3: a skill in an optional plugin counts by `<plugin>:<name>` (the plugin is the folder under plugins/);
+    # a name the repo's own files do not hold stays unknown, and so does the old cct: name of a moved skill.
+    fixture_skills = toolkit_names(os.path.join(FIXTURES, 'toolkit'))[0]
+    for want, got, what in (
+            ('cct-helpers:commit', toolkit_name('cct-helpers:commit', fixture_skills), 'a plugin skill the files hold'),
+            (None, toolkit_name('cct-helpers:ghost', fixture_skills), 'an unknown skill of a known plugin'),
+            (None, toolkit_name('foo-helpers:commit', fixture_skills), 'an unknown plugin'),
+            ('commit', toolkit_name('cct:commit', fixture_skills), 'a core skill'),
+            (None, toolkit_name('cct:ghost', fixture_skills), 'an unknown core skill'),
+            ('cct-helpers:commit', command_name('<command-name>/cct-helpers:commit</command-name>'),
+             'a command row of a plugin skill'),
+            ('cct-jev:jev', command_name('<command-name>/cct-jev:jev</command-name>'), 'a command row of the cct-jev plugin skill'),
+            ('cct-jev:jev', toolkit_name('cct-jev:jev', fixture_skills), 'the cct-jev plugin skill the files hold'),
+            (None, toolkit_name('cct:jev', fixture_skills), 'the old cct: name of the moved jev skill'),
+            (None, command_name('<command-name>/jev</command-name>'), 'a command row with no plugin')):
+        if got != want:
+            bad.append('/plugin skills: %s: want %r, got %r' % (what, want, got))
+    if 'cct-helpers:commit' not in fixture_skills or 'commit' not in fixture_skills:
+        bad.append('/plugin skills: toolkit_names lists %s' % fixture_skills)
+    # the real repo: cct-jev's skill is counted as `cct-jev:jev`, and no bare `jev` is left in skills/
+    real_skills = toolkit_names(os.path.dirname(HERE))[0]
+    if 'cct-jev:jev' not in real_skills or 'jev' in real_skills:
+        bad.append('/plugin skills: the repo itself lists %s' % real_skills)
     with open(os.path.join(FIXTURES, 'projects', '-home-u-git-alpha', 'main-3.jsonl'), encoding='utf-8') as fh:
         raw = fh.read()
     for needle in ('corp.example', 'secretproject', 'acme', 'internal'):  # control: the rows the two probes are about are in the input,
         if needle not in raw:                          # and expected.json's other-model tokens count them
             bad.append('CONTROL FAILED: the fixture has no model string with %r' % needle)
+    with open(os.path.join(FIXTURES, 'projects', '-home-u-git-alpha', 'main-6.jsonl'), encoding='utf-8') as fh:
+        raw = fh.read()
+    for needle in ('ZZ-COMMIT-MARKER-5e1b', 'ZZ-PRBODY-MARKER-9a4e', 'ZZ-FOLLOWUP-MARKER-8d2c', 'ZZ-REFUSAL-MARKER-3b7a'):
+        if needle not in raw:  # control: the backlog leak probes can only pass when the marker is in the input
+            bad.append('CONTROL FAILED: the fixture has no backlog marker %r' % needle)
     corrections, notes = local.get('corrections', []), local.get('notes', {})
     texts = [c.get('text') for c in corrections]
     if sorted(texts) != sorted(["no, don't run the gate without asking ZZ-PRIVATE-MARKER-7f3a",
-                                "that's not what I asked"]):
+                                "that's not what I asked", "no, wrong file"]):
         bad.append('/local/corrections: got %s' % texts)
     if any(set(c) != {'project', 'ts', 'text'} or c['project'] != '-home-u-git-alpha' for c in corrections):
         bad.append('/local/corrections: wrong shape %s' % corrections)
@@ -785,10 +1074,30 @@ def self_test():
             bad.append('/num(%r): want 0, got %s' % (value, num(value)))
     if num(7) != 7 or num(7.9) != 7:
         bad.append('/num: a finite number must pass through')
-    if sorted(local.get('hook_blocks', {}).items()) != [('<unattributed>', 1), ('deny-hang-shapes', 2),
-                                                        ('gate-before-merge', 2), ('no', 1), ('seal-guard', 1)]:
+    if sorted(local.get('hook_blocks', {}).items()) != [('<unattributed>', 1), ('backlog-item-check', 13),
+                                                        ('deny-hang-shapes', 2), ('gate-before-merge', 4),
+                                                        ('other', 1), ('seal-guard', 1)]:
         bad.append('/local/hook_blocks: got %s' % local.get('hook_blocks'))
     pre = 'PreToolUse:Bash hook error: '
+    fixture_hooks = os.path.join(FIXTURES, 'toolkit')
+    table = refusal_table(fixture_hooks, toolkit_hooks(fixture_hooks))
+    # the fixture hooks hold: a text of a hook-name token (not in the table), one no-name text of
+    # gate-before-merge, and one text found in two hooks; the dispatch texts are always there
+    if sorted(table) != sorted([('No gate artifact found.', 'gate-before-merge'),
+                                ('Shared state file unreadable here.', OTHER),
+                                ('cct plugin files are missing', 'dispatch'),
+                                ('bash not found on PATH', 'dispatch')]):
+        bad.append('/refusal_table: got %s' % table)
+    for text, want in (
+            (pre + '[command hook 4]: BLOCKED: No gate artifact found. Run the gate.', 'gate-before-merge'),
+            (pre + '[command hook 4]: BLOCKED: Shared state file unreadable here.', OTHER),
+            (pre + '[command hook 4]: BLOCKED: cct plugin files are missing (the plugin was upgraded).', 'dispatch'),
+            (pre + '[command hook 4]: BLOCKED: bash not found on PATH', 'dispatch'),
+            (pre + '[command hook 4]: BLOCKED: gate-before-merge refuses: x', 'gate-before-merge'),
+            (pre + '[command hook 4]: BLOCKED: Unknown refusal text', 'unknown'),
+            (pre + '[f="${P}/hooks/deny-hang-shapes.sh"; bash "$f"]: BLOCKED: No gate artifact found.', 'deny-hang-shapes')):
+        if block_hook(text, True, table) != want:
+            bad.append('/block_hook table (%r): want %s, got %s' % (text[-50:], want, block_hook(text, True, table)))
     for text, is_error, want in (
             (pre + '[f="${X:-.}/hooks/deny-hang-shapes.sh"; [ -f "$f" ] && bash "$f"]: BLOCKED: use', True,
              'deny-hang-shapes'),
@@ -812,6 +1121,37 @@ def self_test():
             ('PreToolUse:Bash [c]: BLOCKED: gate-before-merge', True, None)):
         if block_hook(text, is_error) != want:
             bad.append('/block_hook(%r, %s): want %s, got %s' % (text[:60], is_error, want, block_hook(text, is_error)))
+    # the hook's own refusal texts the fixture rows do not hold, each as the hook prints it (the unmapped ones go to other/other)
+    for text, want in (
+            ("the checkout is on a detached HEAD and no head branch was given: run from the PR's own checkout.", 'file/wrong-checkout'),
+            ("head 'x' is not a branch name (no revision expressions such as ~ or @{}): run from the PR's own checkout.",
+             'file/wrong-checkout'),
+            ("base 'x' is not a branch name (no revision expressions such as ~ or @{}): pass --base <branch>.", 'file/no-base'),
+            ('cannot read the diff of HEAD against refs/remotes/origin/main: run from the PR\'s own checkout.', 'file/wrong-checkout'),
+            ('cannot read the commits of refs/remotes/origin/main..HEAD: run from the PR\'s own checkout.', 'file/wrong-checkout'),
+            ('/x is not inside a git checkout: run from the PR\'s own checkout.', 'other/wrong-checkout'),
+            ("the body of this gh pr create cannot be read from the command (--body, -b)", 'other/body-unreadable'),
+            ("the body file '/x' holds a $, a backtick, a glob character or a leading ~, so this check cannot tell which file it is: use a plain path.",
+             'other/body-unreadable'),
+            ('title holds a flag-shaped word (a word that starts with -): reword the title.', 'other/other'),
+            ('--base has no value: pass --base <branch>.', 'other/other'),
+            ('the hook payload did not parse, or no JSON parser (node, python3 or jq) is on PATH', 'other/other'),
+            ('hooks/lib/git-cmd.sh missing -- run /cct:sync-template step 6b', 'other/other'),
+            ('', 'other/other')):
+        if backlog_refusal(text) != want:
+            bad.append('/backlog_refusal(%r): want %s, got %s' % (text[:50], want, backlog_refusal(text)))
+    for command, want in (('git commit -m "feat: x" -m "Item: none\nCo-Authored-By: A <a@b>"', True),
+                          ('git commit -m "feat: x" -m "Item: none"', True),
+                          ('git commit -m "$(cat <<\'EOF\'\nfeat: x\n\nItem: none\nCo-Authored-By: A <a@b>\nEOF\n)"', True),
+                          ('git commit -m "feat: x" -m "Item: nonexistent"', False),
+                          ('git commit -m "feat: Item: none is only mentioned"', False)):
+        if item_none('Bash', {'command': command}) != want:
+            bad.append('/item_none(%r): want %s' % (command, want))
+    for text, want in (('Follow-ups:\n- a', True), ('x\r\nFollow-ups:\r\n- a\r\n', True), ('Follow-ups:\n\n- a', False),
+                       ('Follow-ups:\nnone', False), (' Follow-ups:\n- a', False), ('Follow-ups:', False),
+                       ('Follow-ups:\nFollow-ups:\n- a', True), ('', False)):
+        if has_followups(text) != want:
+            bad.append('/has_followups(%r): want %s' % (text, want))
     known = {'.claude/rules/project.md'}
     for line, ok in (('{"date": "2026-11-15", "kind": "helped", "surface": "x-hook", "count": 2}', True),
                      ('{"date": "2026-11-15", "kind": "helped", "surface": "x-hook"}', True),

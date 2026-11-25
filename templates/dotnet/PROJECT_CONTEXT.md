@@ -33,7 +33,7 @@
 <!-- - **Subagent default model**: sonnet -- optional, unset here by default; unset = `sonnet`; one of `haiku`, `sonnet`, `opus`, `fable`: the model a sub-agent spawn gets when neither the call nor its agent file sets one -- general-purpose and built-in agents otherwise inherit the orchestrator's (most expensive) model -->
 <!-- - **Test timeout**: 540 -- optional, unset here by default; unset = 540; whole seconds, 30-3300: how long the per-commit **Test** may run before pre-commit-test.sh stops it and every process it started and REFUSES the commit (the harness kills a hook at its own timeout and lets the call through, so this budget must fire first); it also bounds the Gate fallback used when there is no **Test**, so a slow Gate-only repo is refused at the budget (540 s unset); keep **Test** a fast subset and put the full suite in **Gate** / **Gate extra** -->
 - **Post-edit build**: none <!-- setup fills {{POST_EDIT_BUILD}}; none = no post-edit build -->
-<!-- Post-edit build runs after every Edit/Write via hooks/post-edit-build.sh; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
+<!-- Post-edit build runs after every Edit/Write if `cct-guards` is installed; `none` is a real no-op here (unlike Gate), and an unfilled {{...}} is reported to stderr rather than run. -->
 - **PO write surface**: none
 <!-- extra path prefixes the PO may write directly, space-separated; `none` = the template default -->
 <!-- Declaring BOTH means the Test runs on commit and the Gate does not, so no artifact is minted and every merge needs a separate `cct-gate`. Worth it only above roughly gate_seconds / (gate_seconds - test_seconds) commits per PR — measure yours. Below that, declare the Gate alone and leave the Test field empty: a literal `none` IS an opt-out here (fixed since v3.0.3) -- pre-commit-test.sh treats a trimmed, case-insensitive `none` as absent and falls through to the Gate, the same as leaving the field out. -->
@@ -54,5 +54,5 @@
 
 ## Preprocessing
 
-- **Ollama**: available (MCP: `ollama-tools`) -- see the `mcp-usage` skill for usage rules
+- **Ollama**: available (MCP: `ollama-tools`) -- see the `mcp-usage` skill (if `cct-helpers` is installed) for usage rules
 - **Context7**: available (MCP: `context7`)

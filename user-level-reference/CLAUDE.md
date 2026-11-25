@@ -34,9 +34,11 @@ It also applies to any manual `git worktree add` — pass this path explicitly.
 
 ## Sub-Agent Model Choice
 
-- **Every Agent spawn names its `model` explicitly — unless Jev routing is on in this repo (`/cct:jev on`; a session-start line announces it), then omit `model` and Jev picks one per launch.** A type without its own model (`general-purpose`, other built-ins, `model: inherit`) otherwise inherits the orchestrator's — the most expensive one (measured: 31 such spawns ran on Opus/Fable).
-- **The orchestrator picks per task:** reading, searching, summarising, extracting → `haiku`; implementing, testing, fixing from a clear brief → `sonnet`; reviewing safety-critical code, architecture, debugging an unclear cause → `opus`; `fable` only when `opus` is not enough. Raise `effort` for many-step work or verification that is easy to skip; lower it for lookups.
-- A typed agent's own `model:` is the default when the task fits it; a decider model (Jev) may later route within these bounds.
+- Every Agent spawn names its `model` unless the type owns one; otherwise it inherits the orchestrator's, the dearest.
+- Ladder, haiku < sonnet < opus < fable: lookups, search, summaries (`cct:Explore`, `general-purpose` reading): `haiku`; coding, tests, ops from a clear brief (coders, `cct:tester`, `cct:ops`): `sonnet`; reviews, architecture, safety design (`cct:code-reviewer`, `cct:architect`): `opus` floor, step-up `fable`; other `general-purpose`: `sonnet`.
+- Start each job on the cheapest rung that may do it; on a failed result, start the same job again one step up, and say so in your report to the user. A review that finds the work needs fixes counts as the coder's failure: the fix round's coder starts one step above the model that wrote the code.
+- Reviews, architecture and safety design start on `opus` and never lower. A `Step-up:` note from the hook is an instruction to do exactly that (it reaches you only for foreground spawns; background ones rely on this rule).
+- A review spawn uses `cct:code-reviewer`, which owns its model, rather than `general-purpose` on `opus`; the same holds for other plugins' review steps when they let you pick the type.
 
 ## Sub-Agent File Write Discipline
 
@@ -48,7 +50,7 @@ It also applies to any manual `git worktree add` — pass this path explicitly.
 
 ## Read & Search Tool Selection
 
-`Read` loads file contents directly into the main context window (measured at **22% of total context** across recent claude-code-toolkit sessions — the largest actionable bucket after bulk `assistant_tool_use` and `assistant_thinking`). `hooks/read-size-gate.sh` now enforces the limit mechanically: it caps a `Read` at 500 lines, rewrites the call, and tells you the next `offset`. Use `Read` only for files you will immediately Edit or Write. Route everything else by this table — it supersedes any other search/read guidance:
+`Read` loads file contents directly into the main context window (measured at **22% of total context** across recent claude-code-toolkit sessions — the largest actionable bucket after bulk `assistant_tool_use` and `assistant_thinking`). If `cct-guards` is installed, `read-size-gate` caps a `Read` at 500 lines, rewrites the call, and tells you the next `offset`. Use `Read` only for files you will immediately Edit or Write. Route everything else by this table — it supersedes any other search/read guidance:
 
 | Need | Tool |
 |------|------|
@@ -90,7 +92,7 @@ These are not optional. If the trigger fires, invoke the named skill BEFORE gene
 Apply unless another skill already covers the same ground:
 
 - Multi-step implementation about to start → invoke `superpowers:writing-plans`, then `superpowers:executing-plans` once the plan is approved.
-- Writing production code → invoke `superpowers:test-driven-development` together with `karpathy-guidelines`.
+- Writing production code → invoke `superpowers:test-driven-development` together with `karpathy-guidelines` (if `cct-helpers` is installed).
 - Requesting / digesting code review → `superpowers:requesting-code-review` / `superpowers:receiving-code-review`.
 
 ### Meta skills (no explicit trigger)
@@ -100,5 +102,5 @@ Apply unless another skill already covers the same ground:
 
 ## context-mode plugin
 
-context-mode is optional and, since v3.1.5, **not recommended**: its guidance arrives three times per turn through its own hooks, and its MCP launcher appends a routing block to every project `CLAUDE.md` on every server spawn (`mcp-servers/HOWTO.md` has the measurements). If installed, its SessionStart hook injects its own guidance; do not duplicate it here.
-Subagents do not have `ctx_*` tools — never instruct them to use `ctx_*`.
+context-mode is optional and **not recommended** (measurements: `mcp-servers/HOWTO.md`).
+Subagents have no `ctx_*` tools, so never tell them to use `ctx_*`.

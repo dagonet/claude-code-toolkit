@@ -5,10 +5,11 @@
 # Two callers, one answer (Jev Phase 1 spec, step 2: the router "reuses
 # model-floor's resolution code rather than re-deriving it"):
 #   - hooks/model-floor.sh SOURCES it: am_resolve, then am_jev_routing;
-#   - the user-level Jev router (~/.claude/skills/jev/jev_route.py) RUNS it:
+#   - the Jev router (plugins/cct-jev/skills/jev/jev_route.py) RUNS it:
 #       bash agent-model.sh <subagent_type> <cwd>
 #     and reads ONE line: "<kind> <model|-> <jev 0|1> <effort|-> <git common dir|->".
-#     Arguments are data: a type outside [A-Za-z0-9_.-] (bar one `cct:` prefix) resolves to `none`.
+#     Arguments are data: a type outside [A-Za-z0-9_.-] (bar one `cct:` prefix) resolves to `none`,
+#     unless it is exactly a row of the agent type table (am_table).
 # kind: own   -- the agent file sets a model (an alias or a full id): its choice
 #       floor -- no model of its own (`inherit`, none, or a known inheriting
 #                built-in with no file): **Subagent default model**, else sonnet
@@ -17,12 +18,13 @@
 #                aside (the native default wins); the Jev router routes from
 #                that value (user ruling U-1)
 #       none  -- a self-modelled built-in, a type no visible file defines (cct:<n> is
-#                looked up in the plugin's agents/ only), another plugin's x:y, or an
-#                unsafe name: change nothing
+#                looked up in the plugin's agents/ only), another plugin's x:y that is not
+#                a row of the agent type table (am_table, v7.0.0), or an unsafe name:
+#                change nothing
 # Agent identity (S-22): the frontmatter `name:`, .claude/agents/ scanned
 # recursively, project before user level, filename as the fallback.
 # No JSON parser needed: it reads frontmatter and PROJECT_CONTEXT.md only.
-# Shipped by the cct plugin (hooks/lib/) and by sync-template into projects; no user-level copy since v5.0.
+# Shipped by the cct plugin (hooks/lib/), pinned byte for byte into plugins/cct-jev/hooks/lib/ (check 88), and by sync-template into projects; no user-level copy since v5.0.
 
 # S-23/S-30: CLAUDE_CODE_SUBAGENT_MODEL is a native default only when it holds a
 # REAL model (an alias or a full claude-* id); `inherit` or empty means unset.
@@ -56,13 +58,41 @@ am_find() {
 # ~/.claude, which Tasks 7/13 retire.
 am_plugin_root() { printf '%s' "${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"; }
 
-# am_resolve <type> <cwd> -- sets AM_KIND, AM_MODEL, AM_EFFORT, AM_ROOT.
-# AM_ROOT stays empty on the early `env`/`none` answers (no git call needed).
+# am_table <type> -- the fixed agent type table (v7.0.0, spec section 10 item 1). One row per toolkit agent type:
+# the six core types and the four language plugins' coders. A row sets AM_T_MODEL, AM_T_EFFORT and AM_T_PIPE (the
+# `pipeline:` flag, empty for none); a type that is not a row returns 1 and sets nothing. No sibling-plugin file is
+# read: a plugin's agents are not on a path this library can know. Check 87 pins every row, two-sided, against
+# the agent file's frontmatter, so the table cannot drift from the file it describes.
+am_table() {
+  AM_T_MODEL=""; AM_T_EFFORT=""; AM_T_PIPE=""
+  case "$1" in
+    cct:coder)                  AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=true ;;
+    cct:code-reviewer)          AM_T_MODEL=opus   AM_T_EFFORT=xhigh  AM_T_PIPE=true ;;
+    cct:tester)                 AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=notify ;;
+    cct:architect)              AM_T_MODEL=opus   AM_T_EFFORT=xhigh  AM_T_PIPE=notify ;;
+    cct:Explore)                AM_T_MODEL=haiku  AM_T_EFFORT=low ;;
+    cct:ops)                    AM_T_MODEL=sonnet AM_T_EFFORT=medium ;;
+    dotnet-tools:dotnet-coder)  AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=true ;;
+    python-tools:python-coder)  AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=true ;;
+    rust-tools:rust-coder)      AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=true ;;
+    java-tools:java-coder)      AM_T_MODEL=sonnet AM_T_EFFORT=medium AM_T_PIPE=true ;;
+    *) return 1 ;;
+  esac
+}
+
+# am_resolve <type> <cwd> -- sets AM_KIND, AM_MODEL, AM_EFFORT, AM_PIPELINE, AM_ROOT.
+# AM_ROOT stays empty on the early `env`/`none`/table answers (no git call needed). AM_PIPELINE is set only
+# by a table row (the other types' `pipeline:` flag is read from their file by whoever needs it).
 am_resolve() {
-  AM_KIND=none; AM_MODEL=""; AM_EFFORT=""; AM_ROOT=""
+  AM_KIND=none; AM_MODEL=""; AM_EFFORT=""; AM_PIPELINE=""; AM_ROOT=""
   am_t=${1:-general-purpose}
   am_env_forced && { AM_KIND=env; AM_MODEL=$CLAUDE_CODE_SUBAGENT_MODEL; return 0; }
   [ -n "$AM_ENV_REAL" ] && [ "$am_t" = general-purpose ] && { AM_KIND=env; AM_MODEL=$CLAUDE_CODE_SUBAGENT_MODEL; return 0; }
+  # v7.0.0: a table row answers before any file is read (the plugin's agents/ included).
+  if am_table "$am_t"; then
+    AM_KIND=own; AM_MODEL=$AM_T_MODEL; AM_EFFORT=$AM_T_EFFORT; AM_PIPELINE=$AM_T_PIPE
+    return 0
+  fi
   # v5.0: plugin agents are named cct:<name> and live in the plugin's agents/ (spec §2).
   # Another plugin's agent (x:y) is not a toolkit agent: not ours, change nothing.
   am_plug=""
@@ -111,28 +141,28 @@ am_resolve() {
 # AM_JEV_MARKER -- the path every v4 /jev registration names. Check 65 asserts the
 # v4 registration literal (REG_COMMAND in jev_ctl.py, now only what legacy removal matches) contains it.
 AM_JEV_MARKER='skills/jev/jev_route.py'
-# am_plugin_loaded <session_id> -- exit 0 iff hooks/cct-session.sh marked this session (the cct plugin
-# is loaded in it). The id is sanitized as cct-session.sh does: only [A-Za-z0-9-], else "not loaded".
-# A marker dir this user does not own is no marker dir (as for the guard), except on Git Bash/Cygwin.
-am_plugin_loaded() {
+# am_jev_loaded <session_id> -- exit 0 iff the cct-jev plugin's SessionStart hook (plugins/cct-jev/hooks/cct-jev-session.sh)
+# marked this session. The marker lives in ${TMPDIR:-/tmp}/cct-jev-<uid>/, NOT in cct-<uid>/ (the folder the project template's
+# guard reads), so it can never satisfy that guard and the cct-session marker can never satisfy this. The id is sanitized as the
+# writer does: only [A-Za-z0-9-], else "not loaded". A marker dir this user does not own is no marker dir, except on Git Bash/Cygwin.
+am_jev_loaded() {
   case ${1:-} in ''|*[!A-Za-z0-9-]*) return 1 ;; esac
-  local am_d="${TMPDIR:-/tmp}/cct-$(id -u)"
+  local am_d="${TMPDIR:-/tmp}/cct-jev-$(id -u)"
   case $(uname -s) in MINGW*|MSYS*|CYGWIN*) ;; *) [ -O "$am_d" ] || return 1 ;; esac
   [ -f "$am_d/$1" ]
 }
 # am_jev_routing <root> [<session_id>] -- exit 0 iff the Jev router WILL run for a spawn in this
-# checkout, so model-floor may step aside (v4.4.0 R-2). All four must hold:
-#   1. <git common dir>/jev/config.json says "route": true      (/cct:jev on, per clone)
-#   2. a router exists to run it                                 (a deleted skill is silent):
-#        the plugin's skills/jev/jev_route.py, registered by hooks/hooks.json, unless
-#        this checkout still has a v4 registration (4 below), which the plugin steps aside for
-#   3. python3 runs                                              (the registration runs it)
-#   4. a v4 registration in <root>/.claude/settings.local.json runs ~/.claude/skills/jev/jev_route.py
-#      (per CHECKOUT: a sibling worktree of the same clone has its own settings.local.json)
-#      The plugin branch (2) also requires, WHEN a session id is passed (model-floor always passes one,
-#      possibly empty), that the plugin is loaded in this session (am_plugin_loaded): a plugin-SHAPED
-#      checkout without the plugin loaded has no router registered, so the floor must apply.
-#      jev-route.sh / jev-notice.sh pass none: they only run inside the loaded plugin.
+# checkout, so model-floor may step aside (v4.4.0 R-2). All of these must hold:
+#   1. <git common dir>/jev/config.json says "route": true      (/cct-jev:jev on, per clone)
+#   2. python3 runs                                              (the registration runs it)
+#   3. a router exists to run it                                 (a deleted skill is silent):
+#      - WITH a session id (model-floor always passes one, possibly empty; v7.0.0): the cct-jev plugin is LOADED in this
+#        session (am_jev_loaded, its own marker). cct holds no router file, so the files are not asked: the marker is the
+#        only evidence that the plugin's hooks.json is registered. Uninstalled plugin = no marker = the floor applies.
+#      - WITHOUT one (jev-route.sh, jev-notice.sh and the executed mode run only inside the loaded plugin): the plugin's own
+#        .claude-plugin/plugin.json and skills/jev/jev_route.py exist (this file is pinned, byte for byte, into cct-jev).
+#   4. a v4 registration in <root>/.claude/settings.local.json runs ~/.claude/skills/jev/jev_route.py takes the place of 3
+#      (per CHECKOUT: a sibling worktree of the same clone has its own settings.local.json); jev-route.sh steps aside for it
 # Any one missing -> model-floor floors, so a spawn never has neither emitter.
 # Sets AM_GD (the absolute git common dir) whenever git answers.
 am_jev_routing() {
@@ -142,8 +172,9 @@ am_jev_routing() {
   python3 -c '' >/dev/null 2>&1 || return 1
   if grep -qF "$AM_JEV_MARKER" "$1/.claude/settings.local.json" 2>/dev/null; then
     [ -f "$HOME/.claude/skills/jev/jev_route.py" ]   # v4 entry: it routes (jev-route.sh steps aside), if its file is there
+  elif [ $# -ge 2 ]; then
+    am_jev_loaded "$2"
   else
-    [ $# -ge 2 ] && { am_plugin_loaded "$2" || return 1; }
     local am_pr; am_pr=$(am_plugin_root)
     [ -f "$am_pr/.claude-plugin/plugin.json" ] && [ -f "$am_pr/skills/jev/jev_route.py" ]
   fi

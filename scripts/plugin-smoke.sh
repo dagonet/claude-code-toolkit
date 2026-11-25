@@ -21,7 +21,7 @@ TOKEN=${WORK##*/tmp.}   # random part of mktemp's name: identical in the POSIX a
 # Windows it names them after the Windows form of the cwd). A slug is removed only if it contains the run's token.
 cleanup() {
   local d p slug
-  for d in "$WORK/scratch" "$WORK/scratch-off"; do
+  for d in "$WORK/scratch" "$WORK/scratch-off" "$WORK/scratch-core"; do
     for p in "$d" "$(cygpath -w "$d" 2>/dev/null)"; do
       [ -n "$p" ] || continue
       slug=$(printf '%s' "$p" | sed 's/[:\\/._]/-/g')
@@ -36,13 +36,22 @@ pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1${2:+ -- $2}"; FAILS=$((FAILS + 1)); }
 
 # --- scratch repo: v5 template settings + manifest + a local bare origin -------------------------------------
-# $1 = dir, $2 = true|false (enabledPlugins value for cct@dagonet)
+# $1 = dir, $2 = true|false (enabledPlugins value for cct@dagonet), $3 = "alone" (optional): also set every other
+# plugin in marketplace.json to false, so a user-scope optional plugin on the release machine cannot load (row 11)
 mkscratch() {
   mkdir -p "$1/.claude"
   # enabledPlugins keeps ONLY cct@dagonet: the template's superpowers/code-review would make claude record a
   # project-scope install for the scratch path in the live ~/.claude/plugins/installed_plugins.json
-  python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); d["enabledPlugins"]={"cct@dagonet": sys.argv[3]=="true"}; json.dump(d,open(sys.argv[2],"w"),indent=2)' \
-    "$ROOT/templates/general/.claude/settings.json" "$1/.claude/settings.json" "$2"
+  python3 -I -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["enabledPlugins"] = {"cct@dagonet": sys.argv[3] == "true"}
+if sys.argv[4] == "alone":
+    for p in json.load(open(sys.argv[5]))["plugins"]:
+        if p["name"] != "cct":
+            d["enabledPlugins"][p["name"] + "@dagonet"] = False
+json.dump(d, open(sys.argv[2], "w"), indent=2)' \
+    "$ROOT/templates/general/.claude/settings.json" "$1/.claude/settings.json" "$2" "${3:-}" "$ROOT/.claude-plugin/marketplace.json"
   echo '{}' > "$1/.claude/template-manifest.json"
   git init -q -b main "$1" && git -C "$1" config user.email smoke@example.invalid && git -C "$1" config user.name smoke
   git init -q --bare "$WORK/origin-$(basename "$1").git"
@@ -68,6 +77,7 @@ cl() {
 mkdir -p "$WORK/tmp" "$WORK/mem"
 SC="$WORK/scratch"; mkscratch "$SC" false
 OFFSC="$WORK/scratch-off"; mkscratch "$OFFSC" false
+CORESC="$WORK/scratch-core"; mkscratch "$CORESC" false alone
 
 # 1. A push to main is refused and its side effect never happens.
 check_push_refused() {
@@ -112,7 +122,8 @@ check_explore_spawn() {
   rm -rf "$WORK/mem"; mkdir -p "$WORK/mem"
   # wc may print an absolute path (subagents often use one after deny-hang-shapes refuses a cd), hence [^"]* before the name.
   n=$(( RANDOM % 9000 + 1000 )); head -c "$n" /dev/zero | tr '\0' x > "$SC/out.rand"
-  out=$(PERSIST=1 cl "$SC" "$ROOT" "Use the Agent tool exactly once with subagent_type cct:Explore and this prompt: 'Run these two Bash commands, one call each: first  cd /tmp && ls && pwd  (it may be refused; that is fine, do not retry), then  wc -c out.rand  in your starting directory. Then reply with the byte count.' Then report what the agent returned.")
+  # retro-ledger lives in the optional cct-learning plugin, so row 5 loads it next to cct (cl cds into the scratch repo, hence the absolute path).
+  out=$(PERSIST=1 cl "$SC" "$ROOT" "Use the Agent tool exactly once with subagent_type cct:Explore and this prompt: 'Run these two Bash commands, one call each: first  cd /tmp && ls && pwd  (it may be refused; that is fine, do not retry), then  wc -c out.rand  in your starting directory. Then reply with the byte count.' Then report what the agent returned." --plugin-dir "$ROOT/plugins/cct-learning")
   led=$(find "$WORK/mem" -name retro.md 2>/dev/null | head -1)
   if [ -z "$led" ]; then fail "5 cct:Explore spawn" "no retro ledger written"
   elif ! grep -q 'cct:Explore' "$led"; then fail "5 cct:Explore spawn" "ledger has no cct:Explore row: $(head -c 200 "$led")"
@@ -177,8 +188,36 @@ check_live_state_untouched() {
   else fail "10 live installed_plugins.json and settings.json carry no scratch path" "scratch root found in:$bad"; fi
 }
 
+# 11. The core alone (v7.0.0 slim core): cct loaded with no optional plugin. No registered command path names a script
+#     that moved to an optional plugin (cct-guards, cct-learning, cct-jev), and a nested session runs a command with the
+#     core hooks and shows no moved script name. Two-sided: the registrations are read from hooks/hooks.json first and
+#     must name core hooks that exist (an empty read would pass "none moved"), so a green row cannot be vacuous.
+check_core_alone() {
+  local moved='read-size-gate|bash-output-guard|agent-budget-warn|post-edit-build|retro-ledger|retro-brief|jev-route|jev-notice|cct-jev-session'
+  local reg n out missing=""
+  reg=$(python3 -I -c '
+import json, re, sys
+d = json.load(open(sys.argv[1]))
+for groups in d["hooks"].values():
+    for g in groups:
+        for h in g["hooks"]:
+            print(h.get("command", ""))' "$ROOT/hooks/hooks.json" 2>/dev/null)
+  n=$(printf '%s\n' "$reg" | grep -c .)
+  if [ "$n" -lt 5 ]; then fail "11 core alone" "only $n registered commands read from hooks/hooks.json"; return; fi
+  if printf '%s\n' "$reg" | grep -Eq "$moved"; then fail "11 core alone" "a registered command names a moved script: $(printf '%s\n' "$reg" | grep -Eo "$moved" | sort -u | tr '\n' ' ')"; return; fi
+  for s in $(printf '%s\n' "$reg" | grep -Eo 'hooks/[A-Za-z0-9._-]+\.sh' | sort -u); do [ -f "$ROOT/$s" ] || missing="$missing $s"; done
+  if [ -n "$missing" ]; then fail "11 core alone" "a registered script is absent:$missing"; return; fi
+  # its own scratch repo: every optional dagonet plugin is set to false there, so only cct (--plugin-dir) loads
+  out=$(cl "$CORESC" "$ROOT" "Run exactly this one Bash command: touch out.core")
+  if [ ! -e "$CORESC/out.core" ]; then fail "11 core alone" "the command did not run under cct alone: $(printf '%s' "$out" | grep -o 'BLOCKED[^"]*' | head -1)"
+  elif printf '%s' "$out" | grep -Eq "$moved"; then fail "11 core alone" "the session stream names a moved script: $(printf '%s' "$out" | grep -Eo "$moved" | sort -u | tr '\n' ' ')"
+  else pass "11 core alone ($n registered commands, none names a moved script)"; fi
+  rm -f "$CORESC/out.core"
+}
+
 check_push_refused
 check_true_runs "$SC" "$ROOT" "2 true runs"
+check_core_alone
 check_plugin_off
 check_gate_on_path
 check_explore_spawn

@@ -27,7 +27,10 @@
 #                     sub-plugins (git-tools, ...) are recorded first with their enabled state and saved
 #                     values (a mode-600 temp file, deleted on exit, never printed) and put back after
 #                     the cct install: install, restore values, disable if they were off. Never one that
-#                     was not installed.
+#                     was not installed. Since v7.0.0 the optional plugins (cct-guards, cct-learning,
+#                     cct-helpers, cct-jev, the language plugins) are installed only when named with
+#                     --with <plugin,...>; they are checked against marketplace.json before anything is removed
+#                     and are enabled afterwards even if the user had one at false.
 #   2. CLAUDE.md      the reference, with its Windows "Platform" section replaced by
 #                     scripts/linux/CLAUDE-platform-linux.md and G:/git/ paths written as ~/git/
 #   3. settings.json  the existing file with the reference merged in, minus the Windows-only entries
@@ -41,7 +44,9 @@
 #                     ~/.claude/v4-leftovers.bak-<UTC>/ (outside agents/ and skills/, where a
 #                     backup copy would still load)
 #
-# Usage: bash scripts/install-user-level-linux.sh
+# Usage: bash scripts/install-user-level-linux.sh [--with <plugin,...>]
+#   e.g. --with cct-guards,cct-learning,cct-helpers  (names as in .claude-plugin/marketplace.json, minus cct;
+#   the flag may repeat; a re-run without it leaves the optional plugins that are already installed as they were)
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -95,6 +100,27 @@ EOF2
 for t in bash git jq claude; do command -v "$t" >/dev/null 2>&1 || die "missing tool: $t (claude: log in with a login shell, bash -lc)"; done
 [ -f "$REF/CLAUDE.md" ] && [ -f "$REF/settings.json" ] && [ -f "$PLAT" ] && [ -f "$LEFTOVERS" ] && [ -f "$ROOT/VERSION" ] \
   || die "run from a claude-code-toolkit checkout"
+# --with <plugin,...> (repeatable, also --with=<list>): the optional plugins to install next to cct. Read and checked against
+# this checkout's marketplace.json BEFORE anything is removed, so a bad argument changes nothing. A name may carry @dagonet.
+WITH_IDS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --with) [ $# -ge 2 ] || die "--with needs a plugin list (usage: $0 [--with <plugin,...>])"; with_list=$2; shift 2 ;;
+    --with=*) with_list=${1#--with=}; shift ;;
+    *) die "unknown argument: $1 (usage: $0 [--with <plugin,...>])" ;;
+  esac
+  # no globbing in the word split below (a `*` is a name, and an unknown one), and at least one name per --with
+  set -f; with_n=0
+  for w in $(printf '%s' "$with_list" | tr ',' ' '); do
+    with_n=$((with_n + 1))
+    w=${w%@dagonet}
+    jq -e --arg n "$w" 'any(.plugins[]; .name == $n and .name != "cct")' "$ROOT/.claude-plugin/marketplace.json" >/dev/null 2>&1 \
+      || die "unknown optional plugin: $w (known: $(jq -r '[.plugins[].name | select(. != "cct")] | join(" ")' "$ROOT/.claude-plugin/marketplace.json" 2>/dev/null))"
+    case " $WITH_IDS " in *" $w@dagonet "*) ;; *) WITH_IDS="$WITH_IDS${WITH_IDS:+ }$w@dagonet" ;; esac
+  done
+  set +f
+  [ "$with_n" -gt 0 ] || die "--with needs at least one plugin name"
+done
 CCT_SRC=${CCT_MARKETPLACE:-dagonet/claude-code-toolkit#v$(head -1 "$ROOT/VERSION")}
 # The default source is a release tag. Check it exists BEFORE anything is removed (an upgrade removes the old
 # marketplace entry). A CCT_MARKETPLACE override (a path, a fork) is not checked here.
@@ -159,7 +185,14 @@ $SUBS
 EOF
 fi
 subs_pending=""
-claude plugin marketplace list 2>/dev/null | grep -q "$MARKET" || claude plugin marketplace add anthropics/claude-plugins-official || die "cannot add $MARKET: $NR"
+# the optional plugins named with --with: only those, after cct and the restored sub-plugins. One already installed
+# was put back by the restore above (and step 3 enables it), so it is not installed a second time.
+for w in $WITH_IDS; do
+  printf '%s\n' "$SUBS" | awk -v w="$w" '$1 == w {f = 1} END {exit !f}' && continue
+  claude plugin install "$w" </dev/null || die "cannot install $w: $NR"
+done
+mk_list=$(claude plugin marketplace list 2>/dev/null || true)
+[[ $mk_list == *"$MARKET"* ]] || claude plugin marketplace add anthropics/claude-plugins-official || die "cannot add $MARKET: $NR"
 for p in $PLUGINS; do claude plugin install "$p@$MARKET" || die "cannot install $p@$MARKET: $NR"; done
 want_ver=$(head -1 "$ROOT/VERSION" | tr -d '\r')
 claude plugin list --json 2>/dev/null | jq -e --arg v "$want_ver" 'any(.[]; .id == "cct@dagonet" and .scope == "user" and .enabled == true and .version == $v)' >/dev/null \
@@ -184,7 +217,8 @@ own_re="(/\\.claude/hooks|@HOOKS@)/($(sed -n 's#^hooks/\([A-Za-z0-9_-]*\)\.sh$#\
 # every other key keeps the LIVE value and the reference only adds missing keys; the toolkit owns
 # outputStyle, enabledPlugins["cct@dagonet"], autoMode.environment and the hooks (its entries replaced,
 # every other entry kept).
-jq -s --arg pf "$LINUX_PATH_FROM" --arg pt "$LINUX_PATH_TO" --argjson ep "{$plugins_json}" --argjson pre "$pre_ep" --arg own "$own_re" '
+with_json=$(jq -nc '$ARGS.positional' --args $WITH_IDS)
+jq -s --arg pf "$LINUX_PATH_FROM" --arg pt "$LINUX_PATH_TO" --argjson ep "{$plugins_json}" --argjson pre "$pre_ep" --argjson with "$with_json" --arg own "$own_re" '
   def disp: ([(.command // "") | tostring] + ((.args // []) | map(tostring)) | join(" "));
   def union($a; $b): reduce (($a // []) + ($b // []))[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
   (.[1].hooks // {}) as $rh
@@ -205,6 +239,7 @@ jq -s --arg pf "$LINUX_PATH_FROM" --arg pt "$LINUX_PATH_TO" --argjson ep "{$plug
   | reduce ("allow", "deny", "ask") as $k (.; .permissions[$k] = union($l.permissions[$k]; $r.permissions[$k]))
   | if $r.outputStyle then .outputStyle = $r.outputStyle else . end
   | .enabledPlugins += $pre
+  | .enabledPlugins += ($with | map({key: ., value: true}) | from_entries)
   | .enabledPlugins["cct@dagonet"] = true
   | .autoMode.environment = $r.autoMode.environment
   | .hooks = $hooks' "$L/settings.json" "$REF/settings.json" > "$L/settings.json.new" \
@@ -222,5 +257,7 @@ done < "$LEFTOVERS"
 rmdir "$L/hooks/lib" "$L/hooks" 2>/dev/null || true
 
 echo "done. Restart every running Claude session (they lost the toolkit hooks; plugins load at session start)."
-echo "In each checkout where Jev is on, run /cct:jev off, then /cct:jev on."
+if [ -n "$WITH_IDS" ]; then echo "Optional plugins installed by --with: $WITH_IDS"
+else echo "No optional plugin was named: the guards, learning, helpers and Jev plugins are installed only with --with <plugin,...> (see the CHANGELOG's v7 section)."; fi
+echo "In each checkout where Jev is on, install the optional cct-jev plugin, then run /cct-jev:jev off and /cct-jev:jev on."
 echo "Check: bash $ROOT/scripts/verify-user-level-drift.sh --worktree (0 drift = rendered CLAUDE.md, cct@dagonet at VERSION and enabled, no leftover, no stale hook registration, autoMode.environment as the reference)"

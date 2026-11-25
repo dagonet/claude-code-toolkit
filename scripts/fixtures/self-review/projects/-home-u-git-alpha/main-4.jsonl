@@ -1,0 +1,11 @@
+{"type":"user","timestamp":"2026-11-16T09:00:00Z","message":{"role":"user","content":"<command-message>jev</command-message>\n<command-name>/cct-jev:jev</command-name>"}}
+{"type":"user","timestamp":"2026-11-16T09:00:01Z","message":{"role":"user","content":"<command-message>jev</command-message>\n<command-name>/jev</command-name>"}}
+{"type":"user","timestamp":"2026-11-16T09:00:02Z","message":{"role":"user","content":"<command-message>jev</command-message>\n<command-name>/other:jev</command-name>"}}
+{"type":"user","timestamp":"2026-11-16T09:00:03Z","message":{"role":"user","content":"<command-message>commit</command-message>\n<command-name>/cct-helpers:commit</command-name>"}}
+{"type":"user","timestamp":"2026-11-16T09:00:04Z","message":{"role":"user","content":"<command-message>ghost</command-message>\n<command-name>/cct-helpers:ghost</command-name>"}}
+{"type":"assistant","timestamp":"2026-11-16T09:01:00Z","message":{"id":"q1","role":"assistant","content":[{"type":"text","text":"I can apply the change now. Shall I go on?  "}]}}
+{"type":"user","timestamp":"2026-11-16T09:01:01Z","message":{"role":"user","content":"no"}}
+{"type":"assistant","timestamp":"2026-11-16T09:02:00Z","message":{"id":"q2","role":"assistant","content":[{"type":"text","text":"I edited the file."}]}}
+{"type":"user","timestamp":"2026-11-16T09:02:01Z","message":{"role":"user","content":"no, wrong file"}}
+{"type":"user","timestamp":"2026-11-16T09:03:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t20","is_error":true,"content":"PreToolUse:Bash hook error: [command hook 5]: BLOCKED: Shared state file unreadable here."}]}}
+{"type":"assistant","timestamp":"2026-11-16T09:04:00Z","message":{"id":"q3","role":"assistant","content":[{"type":"tool_use","id":"t21","name":"Skill","input":{"skill":"cct-helpers:commit"}},{"type":"tool_use","id":"t22","name":"Skill","input":{"skill":"cct-helpers:ghost"}}]}}

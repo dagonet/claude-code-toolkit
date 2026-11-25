@@ -458,6 +458,9 @@ fi
 # parenthesised lines stay for a human reading the file.
 if [[ "$VARIANT" == "rust-tauri" ]]; then
     add_derived '{{TEST_COMMAND}}' "cargo test --manifest-path src-tauri/Cargo.toml"
+    # v7.0.0: the default Gate carries the format check (as python and java do); the dotnet and dotnet-maui
+    # templates already ship theirs (`dotnet format ... --verify-no-changes`). Backend-only, like the Test.
+    add_derived '{{GATE_COMMAND}}' "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo test --manifest-path src-tauri/Cargo.toml"
 fi
 
 # Auto-derived: Python variant
@@ -518,7 +521,7 @@ if [[ "$VARIANT" == "java" ]]; then
     esac
 fi
 
-# Auto-derived: post-edit build (hooks/post-edit-build.sh, PostToolUse Edit|Write).
+# Auto-derived: post-edit build (plugins/cct-guards/hooks/post-edit-build.sh, if cct-guards is installed; PostToolUse Edit|Write).
 # Only the dotnet variants build after every edit; the rest declare `none`.
 if [[ "$VARIANT" == "dotnet" || "$VARIANT" == "dotnet-maui" ]]; then
     add_derived '{{POST_EDIT_BUILD}}' "dotnet build --no-restore -v q"
@@ -1312,8 +1315,10 @@ case "$VARIANT" in
     *)                  srv_plugin="" ;;
 esac
 if [[ -n "$srv_plugin" ]]; then
+    # The list is captured, not piped: under pipefail a `grep -q` that exits at the first match kills the writer with SIGPIPE.
     if command -v claude >/dev/null 2>&1 \
-       && claude plugin list 2>/dev/null | grep -qF "$srv_plugin@dagonet" \
+       && srv_list=$(claude plugin list 2>/dev/null) \
+       && [[ $srv_list == *"$srv_plugin@dagonet"* ]] \
        && (cd "$TARGET_DIR" && claude plugin enable "$srv_plugin@dagonet" --scope local >/dev/null 2>&1); then
         echo "  [+] $srv_plugin@dagonet enabled for this clone (local scope)"
     else

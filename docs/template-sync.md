@@ -28,7 +28,9 @@ Pull template updates into your project. The skill calls MCP tools to classify e
 
 For conflicts, the MCP server reconstructs the common ancestor via `git show` and produces a three-way merge. If the merge is clean, it's offered for approval. If it has conflict markers, you resolve manually.
 
-## `/cct:contribute-upstream` (upstream: project -> template)
+**Old part names in files you keep (v7.0.0).** v7.0.0 renamed the language coders and the skills that moved into optional plugins. A file the sync never rewrites (your own agents, `.claude/project-instructions.md`, a `PROJECT-CUSTOM` region, README.md, CLAUDE.local.md) may still use an old name. In its report step the skill runs `skills/sync-template/old-names.sh` and prints one `<file>:<line>: <old> -> <new>` warning per hit under `Warnings:`, naming the plugin to install. It edits nothing and prints nothing when no file uses an old name; you change the name yourself. The old-to-new map is in the CHANGELOG's v7.0.0 section.
+
+## `/cct-helpers:contribute-upstream` (upstream: project -> template; if `cct-helpers` is installed)
 
 Push project improvements back to the template. The skill:
 
@@ -38,11 +40,11 @@ Push project improvements back to the template. The skill:
 4. Checks cross-variant file identity and propagates to matching variants
 5. Stages changes in the template repo (does not commit — you review first)
 
-## `/cct:commit` Integration
+## `/cct-helpers:commit` Integration (if `cct-helpers` is installed)
 
 When committing, if `.claude/template-manifest.json` exists, the commit workflow calls `template_compute_status` to detect drift:
 
-- **Locally modified files**: Prints a reminder to run `/cct:contribute-upstream`
+- **Locally modified files**: Prints a reminder to run `/cct-helpers:contribute-upstream`
 - **Template updates available**: Prints a reminder to run `/cct:sync-template`
 
 This is informational only — it never blocks a commit.
@@ -230,7 +232,7 @@ Two things that look like failure but are not:
 
 **Verify a hook enforces, not just that it exits — the enforcing-vs-inert pair.** Probing only the new shape-witness arms (no `tool_input.prompt` → exit 2) yields 2s on every probe and proves nothing about whether the hook still enforces its actual rule. For `deny-hang-shapes.sh`, the real check is a multi-line `cd` followed by two commands (must exit 2) paired with a heredoc look-alike that writes no file (must exit 0) — the 0/2 pair is the enforcing-vs-inert arm.
 
-**Project-only hooks are plugin-registered but inert outside a toolkit project.** `hooks/hooks.json` registers `pre-commit-test`, `gate-before-merge`, `deny-claude-md-writes`, `read-size-gate`, `enforce-delegation`, `agent-budget-warn`, `post-edit-build`, `enforce-agent-contract`, `retro-ledger`, `retro-brief` and `now-brief` through `hooks/run-hook.sh`, which classes them `project` and exits 0 unless the repo has `.claude/template-manifest.json` — that check keeps them out of non-consumer repos. The `machine` class (`no-push-main`, `deny-secret-reads`, `deny-hang-shapes`, `model-floor`, `bash-output-guard`, `verify-hooks`, `jev-route`, `jev-notice`) acts in every repo. Only `git-pre-push.sh` is not registered anywhere: it is a native git hook installed per clone.
+**Project-only hooks are plugin-registered but inert outside a toolkit project.** `hooks/hooks.json` registers `pre-commit-test`, `gate-before-merge`, `deny-claude-md-writes`, `enforce-delegation`, `enforce-agent-contract` and `now-brief` through `hooks/run-hook.sh`, which classes them `project` and exits 0 unless the repo has `.claude/template-manifest.json` — that check keeps them out of non-consumer repos. The `machine` class (`no-push-main`, `deny-secret-reads`, `deny-hang-shapes`, `model-floor`, `verify-hooks`) acts in every repo. The optional `cct-guards` plugin registers `read-size-gate`, `agent-budget-warn` and `post-edit-build` (project class) and `bash-output-guard` (machine class) the same way through its own `run-hook.sh`; the optional `cct-learning` plugin does so for `retro-ledger` and `retro-brief` (project class); the optional `cct-jev` plugin does so for `jev-route` and `jev-notice` (machine class) and writes its own session marker. Only `git-pre-push.sh` is not registered anywhere: it is a native git hook installed per clone.
 
 ## PROJECT-CUSTOM Region
 
@@ -276,7 +278,7 @@ A consumer who keeps a `CLAUDE.local.md` (not shipped since v4.0.1) is unaffecte
 |---|---|---|
 | `**Test**` | pre-commit falls back to the Gate, which mints the artifact — commit and merge are one run | not declared (fixed since v3.0.3: the plugin's `pre-commit-test` hook treats a trimmed, case-insensitive `none` as absent and falls through to the Gate; before that it was eval'd as a shell command and blocked every commit) |
 | `**Gate-checked branches**` | no branch gets the artifact-freshness-only merge lane | no branch is gate-checked — the plugin's `gc_gate_checked_branches` (`hooks/lib/git-cmd.sh`) reads it as an empty branch list, the SAME as absent. Do not read `none` here as widening access, and do not "fix" this reader to treat `none` as anything else: penumbra, panoscribe and open-brain all carry the literal `none` today as setup's derived default, and redefining it would silently turn merge gating ON for all three |
-| `**Post-edit build**` | the plugin's `post-edit-build` hook is inert | no-op — treated exactly like absent |
+| `**Post-edit build**` | used if `cct-guards` is installed; its `post-edit-build` hook is inert | no-op — treated exactly like absent |
 | `**PO write surface**` | write surface stays at the template default | the template default — no extra prefixes added |
 | `**Test (frontend)**` | no separate frontend test step runs | no-op |
 

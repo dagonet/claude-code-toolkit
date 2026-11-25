@@ -7,16 +7,34 @@
         "hooks": [
           {
             "type": "command",
+            "onFailure": "block",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/backlog-item-check.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
+          },
+          {
+            "type": "command",
             "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/pre-commit-test.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\"",
-            "timeout": 3360
+            "timeout": 3360,
+            "onFailure": "block"
           },
           {
             "type": "command",
-            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/no-push-main.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/no-push-main.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\"",
+            "onFailure": "block"
           },
           {
             "type": "command",
-            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\"",
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__MCP_DOCKER__create_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "onFailure": "block",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/backlog-item-check.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
           }
         ]
       },
@@ -25,7 +43,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/gate-before-merge.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\"",
+            "onFailure": "block"
+          },
+          {
+            "type": "command",
+            "onFailure": "block",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/backlog-item-check.sh\"; [ -r \"$f\" ] || { echo \"HOOK SCRIPT MISSING: $f -- enforcement offline. Check that hooks/ exists at the project root.\" >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo \"HOOK BLOCKED: bash not found on PATH -- $f cannot run\" >&2; exit 2; }; exec bash \"$f\""
           }
         ]
       },
@@ -54,7 +78,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "exec bash \"${CLAUDE_PROJECT_DIR:-.}/hooks/post-edit-build.sh\""
+            "command": "exec bash \"${CLAUDE_PROJECT_DIR:-.}/plugins/cct-guards/hooks/post-edit-build.sh\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/hooks/backlog-brief.sh\"; [ -r \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 10
           }
         ]
       }

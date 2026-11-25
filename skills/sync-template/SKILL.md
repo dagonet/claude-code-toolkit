@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /cct:sy
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v6.2.0 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v7.0.0 -->
 
 **This skill takes no arguments.** Invoke it as `/cct:sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
@@ -871,7 +871,7 @@ grep -oE 'lib/[A-Za-z0-9_.-]+\.sh' hooks/*.sh | sort -u
 
 Add each hit as `hooks/lib/<file>`. They are checked and restored exactly like the scripts in steps 2–4 (`source="template"` when missing — the server resolves the `hooks/lib/` subdirectory against the toolkit root).
 
-> **Match the FORM, not one form.** Until v2.2.1 this step named a single pattern — the `dirname`-of-this-script **source** form (a hook script sourcing its lib by resolving its own directory at runtime), plus a literal `lib/git-cmd.sh`. Every node-program hook references its lib as an **assignment** instead (a `jlib=` variable set from the same dirname-of-this-script expression, pointing at `lib/json.sh`, in `bash-output-guard`, `enforce-agent-contract`, `enforce-delegation`, `read-size-gate`, `require-skills-block`, `retro-brief`, `retro-ledger`), so an agent following this step *literally* never collected `hooks/lib/json.sh`, never noticed it missing, and those seven hooks disabled themselves while the sync report said clean. The three git gates were unaffected — they source `lib/git-cmd.sh` behind a hard `[ -f … ] || exit 2` and fail CLOSED. Over-collecting is harmless: a lib already present is a no-op, and a lib named only in a comment still resolves to a real file.
+> **Match the FORM, not one form.** Until v2.2.1 this step named a single pattern — the `dirname`-of-this-script **source** form (a hook script sourcing its lib by resolving its own directory at runtime), plus a literal `lib/git-cmd.sh`. Every node-program hook references its lib as an **assignment** instead (a `jlib=` variable set from the same dirname-of-this-script expression, pointing at `lib/json.sh`, in `bash-output-guard` and `read-size-gate` (if `cct-guards` is installed), `enforce-agent-contract`, `enforce-delegation`, `require-skills-block`, `retro-brief`, `retro-ledger` (the last two if `cct-learning` is installed)), so an agent following this step *literally* never collected `hooks/lib/json.sh`, never noticed it missing, and those seven hooks disabled themselves while the sync report said clean. The three git gates were unaffected — they source `lib/git-cmd.sh` behind a hard `[ -f … ] || exit 2` and fail CLOSED. Over-collecting is harmless: a lib already present is a no-op, and a lib named only in a comment still resolves to a real file.
 1c. **Cross-check the collected count against an INDEPENDENT source before trusting it (v2.2.6).** The defect above did not announce itself: it produced a number, and every file behind that number really was present, so `5 referenced, 5 present` read as a clean verify. **A collector returning a partial result reads as success** — the fixture-that-passes-vacuously class, one layer out. The counts alone cannot tell you the collector worked; a second, differently-sourced count can.
 
 ```
@@ -1167,6 +1167,8 @@ Version labels are server-authoritative under v3 (`template_version` / `template
 
 **Report a missing pre-push hook (v4.3.2).** Run `grep -qE 'claude-code-toolkit pre-push shim|hooks/git-pre-push\.sh' "$(git rev-parse --path-format=absolute --git-path hooks/pre-push)"`. If it fails, report `pre-push hook missing` and the one install command `bash hooks/git-pre-push.sh --install`. Never install it from the sync -- only a new project gets it at setup.
 
+**Warn on pre-v7 part names in kept files (v7.0.0).** Run `bash "${CLAUDE_SKILL_DIR}/old-names.sh" <project>` after every write is done: template-class files carry the new names by then, so each hit is a file the project keeps (its own agents, `.claude/project-instructions.md`, a `PROJECT-CUSTOM` region, README.md, CLAUDE.local.md). It prints one `<file>:<line>: <old> -> <new> (if <plugin> is installed; ...)` line per hit, prints nothing when there is none, writes nothing and always exits 0. **It only warns: edit none of those files.** Put each line in the report's `Warnings:` entry, and say that the new name needs its optional plugin installed on every machine that has this project (a plain `claude plugin update cct` does not install it). The CHANGELOG's v7.0.0 section holds the whole old-to-new map.
+
 #### 8a. Expected lines, per mode AND per manifest situation (`LINES` is now 30 — v4.1.0 raised it from 24 to 30; v4.1.1 adds `project_md_seed_differs`, directly after `project_md_seed_current`; v4.5.2 adds `retired_rule_names`, directly after `once_notes_changed`; v5.0 removes the three `agent_grants_*` lines with the grants mechanism; `project_hooks` is added directly before `tree_clean`)
 
 **Read `manifest_version_supported` by name — this is a renamed id, not a new one (R-A).** Its predecessor named only the version-3 case, which became a lie the moment a v4 manifest could PASS it too; the count and the closed set are otherwise unchanged. A fleet script or notice still grepping for the old, version-scoped spelling finds nothing after this release and needs updating on its own side, not this skill's.
@@ -1220,7 +1222,7 @@ Then run `bash <templateRepo>/scripts/verify-user-level-drift.sh` and fold its r
 
 Re-run the step-3 **positive control** here as well (the same temp script, `bash <path>`) and fold its result in: the sync rewrote `hooks/` and `settings.json` since the first probe, so this is the run that tells you the *post-sync* enforcement layer is live. `exit=2` + `BLOCKED` → report `Gates: live (scripts behave correctly on a fed payload)`. `exit=0` → report `Gates: INERT` and the recovery note, not a clean sync. Keep the parenthetical: the probe feeds the payload itself, so `live` here means the scripts work, never that the harness fires them.
 
-**Name the parser AND its consequence on the `Gates:` line.** The hooks pick the first WORKING backend of node → python3 → jq, and six of them (`read-size-gate`, `bash-output-guard`, `enforce-delegation`, `retro-ledger`, `retro-brief`, `enforce-agent-contract`'s transcript scan) are embedded node programs that stay inactive without node specifically. "Live" alone hides that. Field-validated shape, use it verbatim:
+**Name the parser AND its consequence on the `Gates:` line.** The hooks pick the first WORKING backend of node → python3 → jq, and six of them (`read-size-gate` and `bash-output-guard` if `cct-guards` is installed, `enforce-delegation`, `retro-ledger` and `retro-brief` if `cct-learning` is installed, `enforce-agent-contract`'s transcript scan) are embedded node programs that stay inactive without node specifically. "Live" alone hides that. Field-validated shape, use it verbatim:
 
 ```
 Gates:        live (parser: node — all 12 hooks enforcing)
@@ -1301,7 +1303,7 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 >
 > The three-term formula `len(invocation) + 1 + len(body)` is retained as the EXPLANATION of what the pipeline does (invocation, one separator newline, the capped/stripped/joined body), never as the number to compute. **`cmd_len` is BYTES** (v4.1.2: the hook records `wc -c`, not `${#GC_CMD}`, so the figure no longer depends on the locale the harness happens to carry — under a UTF-8 locale the old character count read two short per `ö`); the recipe's `wc -c` is the same ruler.
 
-**The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Use `gh pr create --body-file "${TMPDIR:-/tmp}/sync-pr-body.md"` (written with the Write tool), or `--fill` to reuse the commit message. One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
+**The same trap sits one command later, in `gh pr create --body` (v2.2.5).** A PR body describing merge-gating changes is just as much part of the command string as a commit message, and a sync PR describes them by its nature. Write the body with the Write tool to a file of your own at a plain absolute path (the session scratchpad, for example; not a fixed name in a shared `/tmp`), then pass that literal path: `gh pr create --body-file <body-file>`. The path must hold no `$`, `~`, backtick or glob character: the backlog item check cannot tell which file such a path names, and refuses it (so `"${TMPDIR:-/tmp}/..."` is refused). The file must contain a line `Item: none`, which the backlog item check reads — a `--fill` body has none, and the check refuses a `--body` literal. One reviewer dodged this only by using the GitHub MCP tool instead of `gh` — luck again. **State it as the general rule, because the next instance will be a third command:**
 
 > **Any text DESCRIBING gate changes goes in a FILE, never in a command string.** Commit messages, PR bodies, issue bodies, release notes — anything you pass with `-m`, `--body`, or a heredoc. The gates scan the whole string by design; a block on your own prose is uninterpretable, because it does not tell you whether the gate works or whether your message was the violation it caught.
 
@@ -1313,7 +1315,7 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 git add -- <applied_files from step 7> <git-rm'd paths from step 6> .claude/template-manifest.json
 # the sync commit is sync-only: the project's own docs (PROJECT_STATE.md, plans, ...) never go in it;
 # commit them separately, on the same branch if wanted
-# write the message to a FILE first (Write tool), then:
+# write the message to a FILE first (Write tool), with the line `Item: none` in its final trailer block, directly above any Co-Authored-By line, no blank line between, then:
 git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** present this
                                                    # runs the tests only and writes NO artifact
 # --> with **Test** present: now delegate ONE `cct-gate` run to `cct:ops` (the PO cannot run the gate)
@@ -1321,7 +1323,8 @@ git commit -F "$TMPDIR/sync-msg.txt"               # PreToolUse: with **Test** p
 #     <common git dir>/gate/last-pass.tree-<HEAD^{tree}>.json for the committed tree --
 #     skip the extra run when that file exists and carries "status":"pass" (penumbra, v4.6.0)
 git push -u origin <branch>
-gh pr create --fill
+gh pr create --body-file <body-file>               # the literal absolute path you wrote with the Write tool
+                                                   # (no $, ~ or glob in it); the file carries a line: Item: none
 gh pr merge --squash --delete-branch               # `gh` only: it has a --delete-branch flag.
 # The MCP merge tool has NO --delete-branch equivalent. Using it: merge with
 # the MCP tool, then delete the remote branch as its OWN, separate tool call:

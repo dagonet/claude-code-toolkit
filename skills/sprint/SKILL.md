@@ -13,26 +13,34 @@ You are the Product Owner for this sprint. Execute the sprint backlog using para
 
 ## Sprint Execution Workflow
 
-### 1. Read the sprint plan
+### 1. Groom the backlog (AGENT_TEAM.md § Backlog) and land it before any spawn
+
+- Close finished items, rank every untriaged item, re-check the top three
+- In `plan-files` mode: read the sprint plan (step 2) first, and record each of its workstreams as an item in `### Ranked` in this same grooming edit. The backlog item check counts a PR only when it moves an item that is open on the trunk, so an item added after the grooming landed gets every workstream PR refused
+- Land the grooming on the trunk first: a PR that touches only `PROJECT_STATE.md` needs no item
+- One item = one pull request: split an item that needs several PRs when you rank it
+
+### 2. Read the sprint plan
 
 - Read the sprint plan or backlog provided by the user (`$ARGUMENTS`, a plan file under `docs/plans/`, or the backlog in context)
 - Identify all work items and their dependencies
 - Determine which workstreams can run in parallel
 
-### 2. Create tracking items
+### 3. Create tracking items
 
 - In `github-issues` mode: search for existing issues first to avoid duplicates, then create one issue per work item with clear acceptance criteria
-- In `plan-files` mode: record the workstreams in the plan file instead
+- In `plan-files` mode: nothing to create here; the workstream items were recorded in `### Ranked` and landed in step 1
 
-### 3. Dispatch parallel subagents
+### 4. Dispatch parallel subagents
 
 - **If the sprint is a single T4-sized task that is too big for one pass** (multi-module migration, a sweep across many files, competing hypotheses), say **"use a workflow"** first: Claude builds a script-orchestrated dynamic workflow — waves of implementers → two verifiers → a fixer per task — and runs it in the background under auto mode. Come back to this loop for the merge. Fan-out below is for a backlog of independent items.
 - Max 3 parallel workstreams to avoid rate limits
+- T3/T4 tasks are challenged (`challenge` skill) before dispatch
 - Each subagent gets a clear, self-contained scope and its own worktree
 - Assign independent workstreams first; queue dependent ones
 - Spawn long-running workstreams with `background: true` so the sprint loop is not blocked on a single Agent call
 
-### 4. Per-workstream lifecycle
+### 5. Per-workstream lifecycle
 
 For each workstream:
 
@@ -44,7 +52,7 @@ For each workstream:
 
 Each subagent reports in its **final message** — there is no progress channel, and you must not expect or request pings. A foreground Agent call cannot stall: it returns or it errors. For a `background: true` spawn, act on the task-completion notification; past the agent's tool-call budget with no completion, treat the run as failed and re-dispatch with a tighter brief rather than polling.
 
-### 5. Merge sequence
+### 6. Merge sequence
 
 - Before merging any PR, **rebase it onto the latest main**
 - Re-run the gate after the rebase — the gate artifact must match the rebased HEAD
@@ -52,14 +60,14 @@ Each subagent reports in its **final message** — there is no progress channel,
 - After each merge, verify main is green
 - Never merge without a passing gate
 
-### 6. Handle failures
+### 7. Handle failures
 
 - **Rate limit hit**: save full state (each workstream's status, branch name, next step) and notify the user
 - **Gate failure after merge**: fix immediately on main before merging the next PR
 - **Subagent returns without a deliverable**: treat the run as failed, re-dispatch with a tighter brief — do not retry the same prompt
 - **Branch conflicts**: rebase and resolve; don't force-push shared branches
 
-### 7. Finalize
+### 8. Finalize
 
 - After all PRs merge, run the gate on main
 - Update sprint state files and the Definition of Done

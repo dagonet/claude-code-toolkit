@@ -9,6 +9,7 @@
     "Explore": {"claude-haiku-5-5": 4},
     "unknown": {"claude-sonnet-5-5": 1}
   },
+  "step_ups": {"cct:coder": {"sonnet->opus": 2, "opus->fable": 1}},
   "tokens_by_model": {
     "claude-opus-5-5": {"input": 1000, "cache_read": 20000, "output": 500},
     "claude-sonnet-5-5": {"input": 400, "cache_read": 8000, "output": 200}
@@ -23,6 +24,9 @@
     "agents": {"coder": 3, "Explore": 0}
   },
   "hook_blocks": {"gate-before-merge": 4, "other": 1},
+  "backlog_item_none": 3,
+  "backlog_refusals": {"file/no-item": 2, "file/not-pushed": 1},
+  "followups": 2,
   "correction_candidates": 6,
   "notes": {
     "helped": {"commit": {"count": 3, "projects": 2}},

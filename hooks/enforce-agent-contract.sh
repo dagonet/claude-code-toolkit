@@ -75,14 +75,23 @@ case "$AGENT_TYPE" in
   *"/"*|*"\\"*|*".."*) exit 0 ;;
 esac
 # v5.0: cct:<name> is a plugin agent, read from the plugin's agents/ (spec §2);
-# another plugin's x:y is not a toolkit agent. The verdict below keys on the bare name.
+# another plugin's x:y is a toolkit agent only when it is a row of the agent type table (v7.0.0:
+# the language plugins' coders, hooks/lib/agent-model.sh), whose pipeline flag comes from that row --
+# no sibling plugin's file is read. The verdict below keys on the bare name.
+PIPELINE_MODE=""
 case "$AGENT_TYPE" in
   cct:*) AGENT_TYPE=${AGENT_TYPE#cct:}
          def="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}/agents/${AGENT_TYPE}.md" ;;
-  *:*)   exit 0 ;;
+  *:*)   amlib="$(dirname "$0")/lib/agent-model.sh"
+         [ -f "$amlib" ] || { echo "WARN: enforce-agent-contract: hooks/lib/agent-model.sh missing — plugin coders unenforced" >&2; exit 0; }
+         . "$amlib"
+         am_table "$AGENT_TYPE" || exit 0
+         PIPELINE_MODE=$AM_T_PIPE; def="" ;;
   *)     def="${CLAUDE_PROJECT_DIR:-.}/.claude/agents/${AGENT_TYPE}.md" ;;
 esac
-if [ -f "$def" ]; then
+if [ -n "$PIPELINE_MODE" ]; then
+  :   # a table row: the flag is already set
+elif [ -f "$def" ]; then
   # Confine the match to the frontmatter block (between the first two `---`
   # lines) so a `pipeline:` line appearing only in the agent's body text does
   # not make it eligible.
@@ -98,7 +107,7 @@ echo 'PIPELINE: Agent finished. Review workstream status and advance if ready.'
 [ "$PIPELINE_MODE" = "true" ] || exit 0
 
 # v2.2.2: the measured SubagentStop payload lists agent_transcript_path -- this
-# subagent's own JSONL, not the session's -- and retro-ledger.sh, the other
+# subagent's own JSONL, not the session's -- and the retro-ledger hook, the other
 # consumer of this event, reads it. This hook read transcript_path. Prefer the
 # documented field; keep transcript_path as a fallback for a payload lacking it.
 TRANSCRIPT=$(json_get "$INPUT" agent_transcript_path)
@@ -141,7 +150,16 @@ missing=""
 case "$AGENT_TYPE" in
   code-reviewer)
     trimmed=$(printf '%s' "$LAST_TEXT" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    if [ "$trimmed" = "clean" ] || printf '%s' "$LAST_TEXT" | grep -q '\*\*Severity\*\*'; then
+    # v6.3: 'clean' may be followed by exactly one optional `Follow-ups:` block of `- ` lines (the first
+    # non-blank line is `clean`, the next is the header, every later non-blank line is a `- ` item, at least one).
+    fu_clean=$(printf '%s\n' "$LAST_TEXT" | tr -d '\r' | awk '
+      { l = $0; gsub(/^[ \t]+|[ \t]+$/, "", l) }
+      l == "" { next }
+      n == 0 { if (l != "clean") bad = 1; n = 1; next }
+      n == 1 { if (l != "Follow-ups:") bad = 1; n = 2; next }
+      { if (substr(l, 1, 2) != "- ") bad = 1; items++ }
+      END { print (!bad && n == 2 && items > 0) ? "yes" : "no" }')
+    if [ "$trimmed" = "clean" ] || [ "$fu_clean" = yes ] || printf '%s' "$LAST_TEXT" | grep -q '\*\*Severity\*\*'; then
       ok=1
     else
       missing="a severity-tagged findings list (each finding with **Severity** and file:line) or the single word 'clean'"

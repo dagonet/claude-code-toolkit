@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Read", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" read-size-gate" }
+      ] },
+      { "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" agent-budget-warn" }
+      ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Bash|PowerShell", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" bash-output-guard" }
+      ] },
+      { "matcher": "Edit|Write", "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" post-edit-build" }
+      ] }
+    ]
+  }
+}

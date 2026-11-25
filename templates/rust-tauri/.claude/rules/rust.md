@@ -44,7 +44,7 @@ the code MUST be rewritten until it complies.
 
 **Directory overview:** `src/` (frontend TypeScript), `src-tauri/src/` (Rust backend), `e2e/` (E2E tests), `docs/plans/` (design docs + sprint plans).
 
-**Agent fallback:** If `rust-coder`'s MCP tools (rust-tools) are unavailable, it falls back to Bash `cargo` equivalents. Do NOT substitute `coder` for `rust-coder` — it carries Rust/Tauri-specific knowledge beyond MCP tool usage.
+**Agent fallback:** If `rust-tools:rust-coder`'s MCP tools (rust-tools) are unavailable, it falls back to Bash `cargo` equivalents. `cct:coder` is the default; use `rust-tools:rust-coder` if `rust-tools` is installed — it carries Rust/Tauri-specific knowledge beyond MCP tool usage.
 
 **Build & Test:** run `cargo build` + `cargo test` (backend) + `npm test` (frontend), and `cargo clippy -- -D warnings` before committing.
 

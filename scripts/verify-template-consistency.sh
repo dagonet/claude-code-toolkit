@@ -65,6 +65,10 @@ fi
 #    and every spawn carries its brief instead, so no workflow doc may
 #    reintroduce the mandate or name the deleted hook. One alternation per file
 #    so a partial revival fails on the file it lives in.
+#    v6.3: the plan CHALLENGE is a T3/T4 step again -- not a gate: no hook parses it,
+#    and the deleted literals above stay banned. It lives in two places of
+#    AGENT_TEAM.md (the Workflow sentence and the Definition-of-Done row `Plan
+#    challenged`); both are asserted below, so neither can be dropped silently.
 # ---------------------------------------------------------------------------
 GATE_LITERALS='Plan Challenge Protocol|EnterPlanMode|Challenge 1|Challenge 2|tier-before-coder'
 for v in $VARIANTS; do
@@ -77,6 +81,13 @@ for v in $VARIANTS; do
       ok "$f: carries no plan-gate mandate"
     fi
   done
+  f="templates/$v/AGENT_TEAM.md"
+  if [ -f "$f" ] && grep -qxF '| Plan challenged | — | — | Yes | Yes |' "$f" \
+     && grep -qF 'T3 and T4: the plan is challenged (`challenge` skill) before coding starts' "$f"; then
+    ok "$f: the plan challenge is a T3/T4 step (sentence + checkpoint row)"
+  else
+    ko "$f: the T3/T4 plan-challenge sentence or the 'Plan challenged' checkpoint row is missing"
+  fi
 done
 
 # ---------------------------------------------------------------------------
@@ -120,7 +131,7 @@ fi
 
 # v5.0: the shipped agents are the plugin's agents/ (templates ship none); the coder
 # count is computed by glob, and an empty glob is a failure, not a vacuous pass.
-plugin_coders=$(ls agents/coder.md agents/*-coder.md 2>/dev/null)
+plugin_coders=$(ls agents/coder.md plugins/*/agents/*-coder.md 2>/dev/null)
 plugin_coder_n=$(printf '%s\n' "$plugin_coders" | grep -c .)
 coder_contract=$(grep -lF "## Report (HARD REQUIREMENT)" $plugin_coders /dev/null 2>/dev/null | wc -l)
 if [ "$plugin_coder_n" -gt 0 ] && [ "$coder_contract" = "$plugin_coder_n" ]; then
@@ -185,15 +196,15 @@ fi
 
 # Liveness & Scope block: every agents/*.md file.
 # Guards the final-message reporting contract and the scope-abort clause.
-all_agents=$(ls agents/*.md 2>/dev/null | wc -l)
-liveness_count=$(grep -lF "## Liveness & Scope (HARD REQUIREMENT)" agents/*.md 2>/dev/null | wc -l)
+all_agents=$(ls agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
+liveness_count=$(grep -lF "## Liveness & Scope (HARD REQUIREMENT)" agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
 if [ "$liveness_count" = "$all_agents" ]; then
   ok "Liveness & Scope block present in all $all_agents agent files"
 else
   ko "Liveness & Scope block present in only $liveness_count/$all_agents agent files"
 fi
 
-scope_abort=$(grep -lF "Scope abort:" agents/*.md 2>/dev/null | wc -l)
+scope_abort=$(grep -lF "Scope abort:" agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
 if [ "$scope_abort" = "$all_agents" ]; then
   ok "Scope-abort clause present in all $all_agents agent files"
 else
@@ -203,12 +214,12 @@ fi
 # v2.0: subagents report in their FINAL MESSAGE. SendMessage was the named-teammate
 # channel and must not creep back into an agent definition — a partial sweep of the
 # 61 files would otherwise pass every assertion above.
-sendmsg=$(grep -lF "SendMessage" agents/*.md 2>/dev/null | wc -l)
+sendmsg=$(grep -lF "SendMessage" agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
 if [ "$sendmsg" = "0" ]; then
   ok "No agent definition instructs SendMessage reporting (agent teams retired)"
 else
   ko "SendMessage reporting survives in $sendmsg agent files:"
-  grep -lF "SendMessage" agents/*.md 2>/dev/null
+  grep -lF "SendMessage" agents/*.md plugins/*/agents/*.md 2>/dev/null
 fi
 
 banned='fixes code directly|PO only|PO fixes directly|PO reviews directly|PO verifies directly|may be committed directly'
@@ -257,7 +268,7 @@ echo
 # MAX_BLOCKS assertion moved to the hook that still throttles: agent-budget-warn.
 # The history it encodes — a session-wide cap exhausts itself and leaves the rest
 # of a long session ungated — applies to any future cap, so keep asserting it.
-if grep -v '^[[:space:]]*#' hooks/agent-budget-warn.sh 2>/dev/null | grep -q 'MAX_BLOCKS'; then
+if grep -v '^[[:space:]]*#' plugins/cct-guards/hooks/agent-budget-warn.sh 2>/dev/null | grep -q 'MAX_BLOCKS'; then
   ko "liveness: a MAX_BLOCKS session cap is back — it exhausted itself in 21 h on real data (3 blocks vs 41)"
 else
   ok "liveness: no session-wide block cap (per-agent thresholds are the only throttle)"
@@ -269,32 +280,32 @@ fi
 
 # The retro ledger pair (v2.0 PR2) must exist and stay fail-open: both are
 # registered UNWRAPPED, so a non-zero exit would break every stop / session start.
-for f in hooks/retro-ledger.sh hooks/retro-brief.sh; do
+for f in plugins/cct-learning/hooks/retro-ledger.sh plugins/cct-learning/hooks/retro-brief.sh; do
   if [ -s "$f" ]; then
     ok "retro: $f present"
   else
     ko "retro: $f MISSING — the subagent-failure ledger is not shipped"
   fi
 done
-if printf '%s' '{not json' | bash hooks/retro-ledger.sh >/dev/null 2>&1; then
+if printf '%s' '{not json' | bash plugins/cct-learning/hooks/retro-ledger.sh >/dev/null 2>&1; then
   ok "retro-ledger.sh exits 0 on an unusable payload"
 else
   ko "retro-ledger.sh exits non-zero on an unusable payload — it would block subagent stops"
 fi
 
-if grep -qE '\-ge +"?\$(BLOCK_AT|WARN_AT)' hooks/agent-budget-warn.sh 2>/dev/null; then
+if grep -qE '\-ge +"?\$(BLOCK_AT|WARN_AT)' plugins/cct-guards/hooks/agent-budget-warn.sh 2>/dev/null; then
   ko "budget: a threshold uses -ge — that re-blocks every call past the threshold and traps the agent"
 else
   ok "budget: thresholds are crossing-only (-eq), so blocked agents can still report"
 fi
 
-if grep -q 'BLOCK_EVERY' hooks/agent-budget-warn.sh 2>/dev/null; then
+if grep -q 'BLOCK_EVERY' plugins/cct-guards/hooks/agent-budget-warn.sh 2>/dev/null; then
   ok "budget: blocks escalate past BLOCK_AT"
 else
   ko "budget: BLOCK_EVERY missing — a single block does not stop a runaway (worst measured: 417 calls)"
 fi
 
-for f in hooks/agent-budget-warn.sh; do
+for f in plugins/cct-guards/hooks/agent-budget-warn.sh; do
   if grep -q 'liveness.log' "$f" 2>/dev/null && ! grep -q '\$ROOT/\.claude/liveness\.log' "$f" 2>/dev/null; then
     ok "audit trail: $f writes liveness.log under the common git dir (not the working tree)"
   else
@@ -388,7 +399,7 @@ done
 # ---------------------------------------------------------------------------
 echo
 allow_fail=0
-for f in agents/*.md; do
+for f in agents/*.md plugins/*/agents/*.md; do
   [ -f "$f" ] || continue
   tools_line=$(awk 'NR==1&&/^---/{inb=1;next} inb&&/^---/{exit} inb&&/^tools:/{print}' "$f")
   [ -z "$tools_line" ] && continue
@@ -423,12 +434,12 @@ else
   ko "Explore not pinned to haiku (agents/Explore.md)"
 fi
 
-pinned_ids=$(grep -l "^model: claude-" agents/*.md 2>/dev/null | wc -l)
+pinned_ids=$(grep -l "^model: claude-" agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
 if [ "$pinned_ids" = "0" ]; then
   ok "no agent pins a full claude-* model id (aliases only — a proxy may reroute them)"
 else
   ko "$pinned_ids agent files pin a full claude-* model id instead of an alias"
-  grep -l "^model: claude-" agents/*.md 2>/dev/null
+  grep -l "^model: claude-" agents/*.md plugins/*/agents/*.md 2>/dev/null
 fi
 
 # The CLI does not validate `effort:`/`model:` — a v2.1 PR8 probe ran an agent
@@ -436,27 +447,27 @@ fi
 # So a typo ships silently unless something here pins the documented value lists.
 # Count the raw lines first: with no `effort:` anywhere, "0 offenders" is a
 # vacuous pass and the whole check silently stops meaning anything.
-all_effort=$(grep -h "^effort: " agents/*.md 2>/dev/null | grep -c .)
+all_effort=$(grep -h "^effort: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -c .)
 [ "$all_effort" -gt 0 ] || ko "no agent file carries an 'effort:' line — the level-list check would pass vacuously"
-bad_effort=$(grep -h "^effort: " agents/*.md 2>/dev/null | grep -vcE "^effort: (low|medium|high|xhigh)$")
+bad_effort=$(grep -h "^effort: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -vcE "^effort: (low|medium|high|xhigh)$")
 if [ "$bad_effort" = "0" ]; then
   ok "every agent 'effort:' value is one of low/medium/high/xhigh"
 else
   ko "$bad_effort agent 'effort:' values are outside low/medium/high/xhigh (the CLI does not validate this field)"
-  grep -n "^effort: " agents/*.md 2>/dev/null | grep -vE "effort: (low|medium|high|xhigh)$"
+  grep -n "^effort: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -vE "effort: (low|medium|high|xhigh)$"
 fi
 
-all_model=$(grep -h "^model: " agents/*.md 2>/dev/null | grep -c .)
+all_model=$(grep -h "^model: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -c .)
 [ "$all_model" -gt 0 ] || ko "no agent file carries a 'model:' line — the alias-list check would pass vacuously"
-bad_model=$(grep -h "^model: " agents/*.md 2>/dev/null | grep -vcE "^model: (sonnet|opus|haiku|fable|inherit)$")
+bad_model=$(grep -h "^model: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -vcE "^model: (sonnet|opus|haiku|fable|inherit)$")
 if [ "$bad_model" = "0" ]; then
   ok "every agent 'model:' value is one of sonnet/opus/haiku/fable/inherit"
 else
   ko "$bad_model agent 'model:' values are outside the alias list (the CLI does not validate this field)"
-  grep -n "^model: " agents/*.md 2>/dev/null | grep -vE "model: (sonnet|opus|haiku|fable|inherit)$"
+  grep -n "^model: " agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -vE "model: (sonnet|opus|haiku|fable|inherit)$"
 fi
 
-mode_field=$(grep -l "^mode: " agents/*.md 2>/dev/null | wc -l)
+mode_field=$(grep -l "^mode: " agents/*.md plugins/*/agents/*.md 2>/dev/null | wc -l)
 if [ "$mode_field" = "0" ]; then
   ok "no agent carries the undocumented 'mode:' frontmatter field"
 else
@@ -467,7 +478,7 @@ fi
 # tools: omits it cannot open the skills its `## Skills` table names.
 # Counted over the SAME file list, so adding Skill to one of the excluded
 # agents later is a passing change, not a spurious count mismatch.
-skill_list=$(ls agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
+skill_list=$(ls agents/*.md plugins/*/agents/*.md 2>/dev/null | grep -vE '(Explore)\.md$')
 skill_users=$(printf '%s\n' "$skill_list" | grep -c .)
 skill_tool=$(printf '%s\n' "$skill_list" | xargs grep -lE "^tools:.*(^|[ ,])Skill([,]|$)" 2>/dev/null | wc -l)
 if [ "$skill_tool" = "$skill_users" ]; then
@@ -482,7 +493,7 @@ fi
 # exactly the up-front cost v4.5.0 removed. Each agent opens skills on demand
 # from its own `## Skills` table; the coders carry the karpathy preferences as
 # the `## Working rules` digest (check 67).
-skill_preload=$(grep -lE '^skills:' agents/*.md 2>/dev/null)
+skill_preload=$(grep -lE '^skills:' agents/*.md plugins/*/agents/*.md 2>/dev/null)
 if [ -z "$skill_preload" ]; then
   ok "no agent file preloads a skill via skills: frontmatter"
 else
@@ -491,10 +502,10 @@ fi
 
 # A coder that cannot create a file is not a coder: 44 Write calls died on the
 # tool allowlist in the mined sessions.
-coder_files=$(ls agents/coder.md agents/*-coder.md 2>/dev/null | wc -l)
-coder_write=$(grep -lE "^tools:.*(^|[ ,])Write([,]|$)" agents/coder.md agents/*-coder.md 2>/dev/null | wc -l)
+coder_files=$(ls agents/coder.md plugins/*/agents/*-coder.md 2>/dev/null | wc -l)
+coder_write=$(grep -lE "^tools:.*(^|[ ,])Write([,]|$)" agents/coder.md plugins/*/agents/*-coder.md 2>/dev/null | wc -l)
 if [ "$coder_files" -gt 0 ] && [ "$coder_write" = "$coder_files" ]; then
-  ok "Write tool present in all $coder_files coder files (agents/coder.md, agents/*-coder.md)"
+  ok "Write tool present in all $coder_files coder files (agents/coder.md, plugins/*/agents/*-coder.md)"
 else
   ko "Write tool present in only $coder_write/$coder_files coder files"
 fi
@@ -578,7 +589,7 @@ done
 #     number and no bullet's literal text is baked into the assertion.
 # ---------------------------------------------------------------------------
 echo
-KG=skills/karpathy-guidelines/SKILL.md
+KG=plugins/cct-helpers/skills/karpathy-guidelines/SKILL.md
 WP_HEADING='## Toolkit working preferences'
 WP_MIN=11
 if [ ! -s "$KG" ]; then
@@ -676,7 +687,7 @@ fi
 #      class has been patched one instance at a time three times in this repo;
 #      the census is what makes the NEXT anchor fail loudly instead. Every
 #      `grep -E` over PROJECT_CONTEXT.md must go through GC_KEY_PRE.
-bom_anchors=$(grep -n 'PROJECT_CONTEXT\.md' hooks/*.sh hooks/lib/*.sh 2>/dev/null | grep 'grep -E')
+bom_anchors=$(grep -n 'PROJECT_CONTEXT\.md' hooks/*.sh hooks/lib/*.sh plugins/*/hooks/*.sh plugins/*/hooks/lib/*.sh 2>/dev/null | grep 'grep -E')
 bom_total=$(printf '%s\n' "$bom_anchors" | grep -c .)
 bom_bad=$(printf '%s\n' "$bom_anchors" | grep -v 'GC_KEY_PRE' | grep -c .)
 if [ "$bom_total" -eq 0 ]; then
@@ -689,18 +700,19 @@ else
 fi
 # run-gate.sh is standalone (it must run with no JSON parser on PATH, which
 # sourcing git-cmd.sh forbids), so it REPEATS the definition. lib/agent-model.sh
-# repeats it too (one sourced git call per Agent spawn is the cost it avoids).
-# Assert the three copies are the same literal — a duplicated constant that
+# repeats it too (one sourced git call per Agent spawn is the cost it avoids), and so does hooks/backlog-brief.sh
+# (a session-start hook must not source the 1800-line git-cmd.sh for one grep).
+# Assert the four copies are the same literal — a duplicated constant that
 # drifts is how the fixed instance and the unfixed one end up in the same release.
 GC_KEY_PRE_DEF='GC_KEY_PRE="^(${GC_BOM})?[-*[:space:]]*"'
 gkp_have=0
-for gkf in hooks/lib/git-cmd.sh hooks/run-gate.sh hooks/lib/agent-model.sh; do
+for gkf in hooks/lib/git-cmd.sh hooks/run-gate.sh hooks/lib/agent-model.sh hooks/backlog-brief.sh; do
   grep -qF "$GC_KEY_PRE_DEF" "$gkf" && gkp_have=$((gkp_have + 1))
 done
-if [ "$gkp_have" -eq 3 ]; then
-  ok "GC_KEY_PRE defined identically in git-cmd.sh, the standalone run-gate.sh and agent-model.sh"
+if [ "$gkp_have" -eq 4 ]; then
+  ok "GC_KEY_PRE defined identically in git-cmd.sh, the standalone run-gate.sh, agent-model.sh and backlog-brief.sh"
 else
-  ko "GC_KEY_PRE definition drifted: found in $gkp_have of 3 files (git-cmd.sh, run-gate.sh, agent-model.sh)"
+  ko "GC_KEY_PRE definition drifted: found in $gkp_have of 4 files (git-cmd.sh, run-gate.sh, agent-model.sh, backlog-brief.sh)"
 fi
 
 # 21c-2b. GC_TERMINAL_RC, same census for the same reason (v2.2.5).
@@ -812,7 +824,7 @@ RETRO_HELPER_DEF='const winify = s => (process.platform === "win32" ? s.replace(
     || (process.env.HOME && winify(process.env.HOME))
     || os.homedir();'
 rh_have=0
-for rhf in hooks/retro-ledger.sh hooks/retro-brief.sh; do
+for rhf in plugins/cct-learning/hooks/retro-ledger.sh plugins/cct-learning/hooks/retro-brief.sh; do
   grep -qF "$RETRO_HELPER_DEF" "$rhf" && rh_have=$((rh_have + 1))
 done
 if [ "$rh_have" -eq 2 ]; then
@@ -954,9 +966,12 @@ const file = process.argv[process.argv.length - 2], label = process.argv[process
 const Q = "\"";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function projform(cmd) {
-  const m = /hooks\/([A-Za-z0-9_-]+)\.sh/.exec(cmd);
-  if (!m) return null;
+  const m0 = /(plugins\/[A-Za-z0-9_-]+\/)?hooks\/([A-Za-z0-9_-]+)\.sh/.exec(cmd);
+  if (!m0) return null;
+  const m = [m0[0], m0[2]];
   const P = "${CLAUDE_PROJECT_DIR:-.}/hooks/" + m[1] + ".sh";
+  // v7.0.0: the unwrapped form U may name a script an optional plugin ships (the root registration of post-edit-build)
+  const PU = "${CLAUDE_PROJECT_DIR:-.}/" + (m0[1] || "") + "hooks/" + m[1] + ".sh";
   const pf = "f=" + Q + P + Q + "; [ -r " + Q + "$f" + Q + " ] || ";
   const tailF = ". Check that hooks/ exists at the project root." + Q + " >&2; exit 2; }; command -v bash >/dev/null 2>&1 || { echo " + Q + "HOOK BLOCKED: bash not found on PATH -- $f cannot run" + Q + " >&2; exit 2; }; exec bash " + Q + "$f" + Q;
   const tailW = ". Check that hooks/ exists at the project root." + Q + " >&2; exit 0; }; exec bash " + Q + "$f" + Q;
@@ -964,7 +979,7 @@ function projform(cmd) {
     F: new RegExp("^" + esc(pf + "{ echo " + Q + "HOOK SCRIPT MISSING: $f -- ") + "[^\"]+" + esc(tailF) + "$"),
     W: new RegExp("^" + esc(pf + "{ echo " + Q + "WARN: $f missing -- ") + "[^\"]+" + esc(tailW) + "$"),
     O: new RegExp("^" + esc(pf + "exit 0; exec bash " + Q + "$f" + Q) + "$"),
-    U: new RegExp("^" + esc("exec bash " + Q + P + Q) + "$"),
+    U: new RegExp("^" + esc("exec bash " + Q + PU + Q) + "$"),
   };
   for (const k of Object.keys(forms)) if (forms[k].test(cmd)) return [m[1], k];
   return [m[1], "OTHER"];
@@ -1176,7 +1191,7 @@ fi
 #         constant's own two definitions and the prose that explains the number
 #         (comments, the --help text) are not matched. A doc string cannot make
 #         a caller test the wrong code; a bare literal can.
-bare78=$(grep -nE '(exit[[:space:]]+78|-(eq|ne)[[:space:]]+78|[A-Za-z_][A-Za-z0-9_]*=78)([^0-9]|$)' hooks/*.sh hooks/lib/*.sh 2>/dev/null \
+bare78=$(grep -nE '(exit[[:space:]]+78|-(eq|ne)[[:space:]]+78|[A-Za-z_][A-Za-z0-9_]*=78)([^0-9]|$)' hooks/*.sh hooks/lib/*.sh plugins/*/hooks/*.sh plugins/*/hooks/lib/*.sh 2>/dev/null \
   | grep -v 'GC_TERMINAL_RC=78' \
   | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
 if [ -z "$bare78" ]; then
@@ -1490,7 +1505,7 @@ fi
 #      whole hook stops working. `bash -n` catches it in one pass; nothing else
 #      in this suite would, and on a node-less host the fixtures that noticed it
 #      are skipped. Parser-free, so it runs everywhere.
-for sf in hooks/*.sh hooks/lib/*.sh scripts/*.sh; do
+for sf in hooks/*.sh hooks/lib/*.sh plugins/*/hooks/*.sh plugins/*/hooks/lib/*.sh scripts/*.sh; do
   [ -f "$sf" ] || continue
   if bash -n "$sf" 2>/dev/null; then
     ok "$sf parses"
@@ -1673,7 +1688,7 @@ echo
 relhook=$(
   {
     grep -h '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
-    grep -h 'command: "bash hooks/' agents/*.md 2>/dev/null
+    grep -h 'command: "bash hooks/' agents/*.md plugins/*/agents/*.md 2>/dev/null
   } | grep -c .
 )
 if [ "$relhook" -eq 0 ]; then
@@ -1681,14 +1696,14 @@ if [ "$relhook" -eq 0 ]; then
 else
   ko "$relhook hook command(s) still cwd-relative ('bash hooks/...') — they 127 after any cd"
   grep -n '"command": "bash hooks/' templates/*/.claude/settings.json 2>/dev/null
-  grep -n 'command: "bash hooks/' agents/*.md 2>/dev/null
+  grep -n 'command: "bash hooks/' agents/*.md plugins/*/agents/*.md 2>/dev/null
 fi
 #     The intermediate no-fallback form `bash "$CLAUDE_PROJECT_DIR/hooks/` is rejected by name.
 NOFALLBACK_FORM='bash \"$CLAUDE_PROJECT_DIR/hooks/'
 nofallback=$(
   {
     grep -hF "$NOFALLBACK_FORM" templates/*/.claude/settings.json 2>/dev/null
-    grep -hF "$NOFALLBACK_FORM" agents/*.md 2>/dev/null
+    grep -hF "$NOFALLBACK_FORM" agents/*.md plugins/*/agents/*.md 2>/dev/null
   } | grep -c .
 )
 if [ "$nofallback" -eq 0 ]; then
@@ -1696,7 +1711,7 @@ if [ "$nofallback" -eq 0 ]; then
 else
   ko "$nofallback hook command(s) use \$CLAUDE_PROJECT_DIR without the :-. default — they hard-block if the host does not export it"
   grep -nF "$NOFALLBACK_FORM" templates/*/.claude/settings.json 2>/dev/null
-  grep -nF "$NOFALLBACK_FORM" agents/*.md 2>/dev/null
+  grep -nF "$NOFALLBACK_FORM" agents/*.md plugins/*/agents/*.md 2>/dev/null
 fi
 #     v5.0: the ${CLAUDE_PROJECT_DIR:-.} census (every hook command line naming a hooks/
 #     script uses the fallback form) is retired: the templates and agents/ carry no hook
@@ -2168,10 +2183,10 @@ fi
 # legitimately unflagged with no gate failure in their repo.
 # ---------------------------------------------------------------------------
 echo
-a5_names=$( { ls agents/*.md 2>/dev/null; } \
+a5_names=$( { ls agents/*.md plugins/*/agents/*.md 2>/dev/null; } \
   | sed 's@.*/@@;s@\.md$@@' | sort -u )
 a5_true_names=$(
-  for a5f in agents/*.md; do
+  for a5f in agents/*.md plugins/*/agents/*.md; do
     [ -f "$a5f" ] || continue
     awk '/^---$/{n++; next} n==1' "$a5f" \
       | grep -qE '^pipeline:[[:space:]]*true[[:space:]]*$' \
@@ -2263,7 +2278,7 @@ echo
 b1_files=$( { ls ./*.md 2>/dev/null
               ls docs/*.md 2>/dev/null
               find templates user-level-reference skills output-styles -name '*.md' 2>/dev/null
-              ls hooks/*.sh 2>/dev/null
+              ls hooks/*.sh plugins/*/hooks/*.sh 2>/dev/null
             } | sed 's@^\./@@' | grep -v '^CHANGELOG\.md$' | sort -u )
 
 b1_FILEPAT='`?[A-Za-z0-9_.-]+\.md`?'
@@ -3153,7 +3168,7 @@ c41_bad=0
 # the key's closing `\*\*:` -- immediately after the bare name or after the
 # optional `( Command)?` -- keeps the four known readers matched and excludes
 # every other `Gate `.../`Test `... key.
-c41_readers=$(grep -n 'grep -E' hooks/*.sh 2>/dev/null \
+c41_readers=$(grep -n 'grep -E' hooks/*.sh plugins/*/hooks/*.sh 2>/dev/null \
               | grep 'PROJECT_CONTEXT\.md' \
               | grep -E '\\\*\\\*(Gate|Test)(\( Command\)\?)?\\\*\\\*:')
 if [ -z "$c41_readers" ]; then
@@ -3687,14 +3702,14 @@ fi
 # Check 65 -- Jev is opt-in per clone and ships no registration (v4.4.0, spec
 # D1 "zero footprint when off"). (a) No shipped settings file registers the
 # router -- only the v4 `/jev on` wrote it, into one checkout's settings.local.json
-# (v5 `/cct:jev on` writes only <git common dir>/jev/config.json).
-# (b) /cct:jev can never be model-invoked (the model must not switch egress on).
+# (v5 `/cct-jev:jev on` writes only <git common dir>/jev/config.json).
+# (b) /cct-jev:jev can never be model-invoked (the model must not switch egress on).
 # (c) The registration jev_ctl.py writes is the spec's literal and contains
 # the marker agent-model.sh's am_jev_routing greps for: if those two drift
 # apart, model-floor never steps aside for a live router (two emitters) or
 # steps aside for a dead one (none).
 # ---------------------------------------------------------------------------
-note "Check 65: no shipped settings registers the Jev router; /cct:jev is user-invoked only; the registration and the step-aside marker agree"
+note "Check 65: no shipped settings registers the Jev router; /cct-jev:jev is user-invoked only; the registration and the step-aside marker agree"
 C65_SPEC_REG='f="$HOME/.claude/skills/jev/jev_route.py"; [ -f "$f" ] && python3 "$f"; exit 0'
 c65_scan_settings() { # <settings file> -> prints the file when it registers the router
   grep -lF 'jev_route.py' "$1" 2>/dev/null
@@ -3703,19 +3718,28 @@ c65_bad=""
 for c65_f in templates/*/.claude/settings.json .claude/settings.json user-level-reference/settings.json; do
   [ -n "$(c65_scan_settings "$c65_f")" ] && c65_bad="$c65_bad $c65_f(registers jev_route.py)"
 done
-c65_skill=skills/jev/SKILL.md
+c65_skill=plugins/cct-jev/skills/jev/SKILL.md   # v7.0.0: Jev lives in the optional cct-jev plugin
 grep -qx 'disable-model-invocation: true' "$c65_skill" 2>/dev/null || c65_bad="$c65_bad $c65_skill(no 'disable-model-invocation: true' line)"
 c65_marker=$(sed -n "s/^AM_JEV_MARKER='\(.*\)'\$/\1/p" hooks/lib/agent-model.sh | head -1)
-c65_reg=$(sed -n "s/^REG_COMMAND = '\(.*\)'\$/\1/p" skills/jev/jev_ctl.py | head -1)
+c65_reg=$(sed -n "s/^REG_COMMAND = '\(.*\)'\$/\1/p" plugins/cct-jev/skills/jev/jev_ctl.py | head -1)
 [ -n "$c65_marker" ] || c65_bad="$c65_bad agent-model.sh(no AM_JEV_MARKER line)"
 [ "$c65_reg" = "$C65_SPEC_REG" ] || c65_bad="$c65_bad jev_ctl.py(REG_COMMAND is not the spec literal: '${c65_reg:-<none>}')"
 case "$c65_reg" in *"$c65_marker"*) ;; *) c65_bad="$c65_bad REG_COMMAND does not contain AM_JEV_MARKER '$c65_marker'" ;; esac
-# U-1: the orchestrator is told to omit `model` while on -- the rule's exception
-# and the session-start notice must both exist, or Jev routes nothing.
-grep -qF 'unless Jev routing is on in this repo' user-level-reference/CLAUDE.md || c65_bad="$c65_bad user-level-reference/CLAUDE.md(no U-1 exception)"
-grep -q 'omit model on Agent spawns' hooks/jev-notice.sh 2>/dev/null || c65_bad="$c65_bad hooks/jev-notice.sh(no session notice telling the orchestrator to omit model)"
+# U-1: the orchestrator is told to omit `model` while on. Since the cheap-first
+# ladder (v7.0.0) the exception lives in plugins/cct-jev/skills/jev/SKILL.md ONLY; the user-level
+# rule no longer carries it. The session-start notice must still exist, or Jev
+# routes nothing.
+c65_has_exception() { grep -qF 'unless Jev routing is on in this repo' "$1" 2>/dev/null; }
+c65_has_exception user-level-reference/CLAUDE.md && c65_bad="$c65_bad user-level-reference/CLAUDE.md(still carries the U-1 exception)"
+grep -qF 'While Jev routing is on in this repo, do NOT pass `model`' "$c65_skill" 2>/dev/null || c65_bad="$c65_bad $c65_skill(lost the omit-model-while-on rule)"
+grep -q 'omit model on Agent spawns' plugins/cct-jev/hooks/jev-notice.sh 2>/dev/null || c65_bad="$c65_bad plugins/cct-jev/hooks/jev-notice.sh(no session notice telling the orchestrator to omit model)"
+# v7.0.0: nothing of Jev is left in the cct root (the skill, its Python, the two hooks), and cct's registrations name none of it
+for c65_gone in skills/jev hooks/jev-route.sh hooks/jev-notice.sh; do
+  [ -e "$c65_gone" ] && c65_bad="$c65_bad $c65_gone(still in the cct root: Jev moved to plugins/cct-jev)"
+done
+grep -q 'jev-route\|jev-notice' hooks/hooks.json hooks/lib/hook-class.sh 2>/dev/null && c65_bad="$c65_bad cct's hooks.json or hook-class.sh still names a Jev hook"
 if [ -z "$c65_bad" ]; then
-  ok "check 65: no template, root or user-level settings registers jev_route.py; /cct:jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER"
+  ok "check 65: no template, root or user-level settings registers jev_route.py; /cct-jev:jev is disable-model-invocation; REG_COMMAND is the spec literal and contains AM_JEV_MARKER; nothing of Jev is left in the cct root"
 else
   ko "check 65:$c65_bad"
 fi
@@ -3728,6 +3752,12 @@ if [ -n "$(c65_scan_settings "$C65C_TMP/planted.json")" ] && [ -z "$(c65_scan_se
   ok "check 65c: control -- a planted router registration is flagged; the real template is not"
 else
   ko "check 65c: control failed -- check 65's settings scan is vacuous or over-strict"
+fi
+printf '%s\n' '- Every Agent spawn names its model -- unless Jev routing is on in this repo, then omit it.' > "$C65C_TMP/planted.md"
+if c65_has_exception "$C65C_TMP/planted.md" && ! c65_has_exception user-level-reference/CLAUDE.md; then
+  ok "check 65d: control -- a planted U-1 exception sentence is flagged; the real user-level file is clean"
+else
+  ko "check 65d: control failed -- the U-1 absence probe is vacuous"
 fi
 rm -rf "$C65C_TMP"
 
@@ -4275,7 +4305,7 @@ else
   # excludes a wildcard grant (`mcp__<alias>__*`) on its own -- nothing to
   # go stale about a name
   # that isn't there.
-  c50_agent_tokens=$(grep -h '^tools:' agents/*.md 2>/dev/null \
+  c50_agent_tokens=$(grep -h '^tools:' agents/*.md plugins/*/agents/*.md 2>/dev/null \
     | grep -oE 'mcp__[A-Za-z0-9_-]+__[a-z0-9_]+')
   c50_settings_parsed=$(c50_parse_settings templates/*/.claude/settings.json user-level-reference/settings.json)
   c50_settings_grant_tokens=$(printf '%s\n' "$c50_settings_parsed" | awk -F'\t' '$1=="ALLOW"||$1=="MATCHER"{print $2}' | sed '/^$/d' | sort -u)
@@ -4544,7 +4574,7 @@ c53_classify() {
 c53_agents=0
 c53_one_line=0
 c53_bad=""
-for f in agents/*.md; do
+for f in agents/*.md plugins/*/agents/*.md; do
   [ -f "$f" ] || continue
   c53_agents=$((c53_agents + 1))
   c53_r=$(c53_classify "$f")
@@ -4643,6 +4673,7 @@ note "Check 70: every registered hook script exists and passes bash -n; every ex
 c70_tmp=$(mktemp -d)
 c70_h0="$c70_tmp/home0"; mkdir -p "$c70_h0"
 c70_proj="$c70_tmp/proj"; mkdir -p "$c70_proj/.claude"; cp -R hooks "$c70_proj/hooks"
+mkdir -p "$c70_proj/plugins"; cp -R plugins/cct-guards "$c70_proj/plugins/cct-guards"   # v7.0.0: the root registration of post-edit-build names plugins/cct-guards/hooks/
 c70_bad=""
 c70_scanned=0
 for c70_f in $(for v in $VARIANTS; do printf 'templates/%s/.claude/settings.json\n' "$v"; done) .claude/settings.json; do
@@ -4715,12 +4746,12 @@ c71_cmp() { # <label> <got> <want>
   elif [ "$2" != "$3" ]; then c71_bad="$c71_bad [$1 differs from the frozen table: $(printf '%s\n' "$2" | LC_ALL=C sort > "$c71_tmp/got"; printf '%s\n' "$3" | LC_ALL=C sort > "$c71_tmp/want"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"; fi
 }
 # Plugin registrations (v5.0): ONE event;matcher;script row per hooks/hooks.json entry. Both accepted shapes are
-# anchored: `bash "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh" <name>` maps to <name>, and the cct-session fallback
-# (optionally with ` end`; check 74 pins its argument) maps to cct-session. Anything else (an appended `; exit 0`,
+# anchored: `bash "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh" <name>` maps to <name>, and the cct-session fallback and cct-jev's
+# own marker writer cct-jev-session (optionally with ` end`; check 74 pins the argument) map to their own names. Anything else (an appended `; exit 0`,
 # a direct hooks/<name>.sh call, an inline command, a non-command type) maps to OTHER and so never matches the set.
 # The plugin-only rows have no frozen-table counterpart.
 C71_PJS='const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[process.argv.length-1],"utf8"));const out=[];
-const RH=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" ([a-z-]+)$/, CS=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/(cct-session)\.sh"( end)?$/;
+const RH=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" ([a-z-]+)$/, CS=/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/(cct-session|cct-jev-session)\.sh"( end)?$/;
 const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" ";
 const DP=GP.replace("run-hook.sh","dispatch.sh");
 for(const ev of Object.keys(d.hooks||{}))for(const g of d.hooks[ev])for(const h of g.hooks){const c=h.type==="command"?String(h.command):"";const dm=c.startsWith(DP)&&/^(bash|powershell)$/.test(c.slice(DP.length))?"dispatch:"+c.slice(DP.length):null;const gm=dm||(c.startsWith(GP)&&/^[a-z-]+$/.test(c.slice(GP.length))?c.slice(GP.length):null);const r=gm?null:(RH.exec(c)||CS.exec(c));out.push([ev,g.matcher||"",gm||(r?r[1]:"OTHER"),gm?"G":"B"].join(";"));}
@@ -4736,11 +4767,33 @@ c71_flat() { awk -F';' -v dt="$(c71_dtab "$1" | tr '\n' '|')" 'BEGIN { n=split(d
       for (j=1; j<=m; j++) for (i=1; i<=g; i++) print $1 ";" M[j] ";" G[i] }
     else for (j=1; j<=m; j++) print $1 ";" M[j] ";" $3 }'; }
 c71_rows() { c71_px "$1" | cut -d';' -f1-3 | c71_flat "${2:-hooks/dispatch.sh}" | LC_ALL=C sort; } # <hooks.json> [dispatch.sh]
+# v7.0.0: the hooks of every plugin that ships any are audited as ONE set: cct itself plus plugins/*/hooks/. The union is
+# what is compared with the frozen table, so moving a hook between plugins changes nothing here, while a hook in neither
+# (or in both) goes red.
+c71_hjs() { ls hooks/hooks.json plugins/*/hooks/hooks.json 2>/dev/null; }
+c71_hcs() { ls hooks/lib/hook-class.sh plugins/*/hooks/lib/hook-class.sh 2>/dev/null; }
+c71_urows() { { c71_rows "$1" "${2:-hooks/dispatch.sh}"; for c71_uf in plugins/*/hooks/hooks.json; do [ -f "$c71_uf" ] && c71_rows "$c71_uf"; done; } | LC_ALL=C sort; } # <cct hooks.json> [dispatch.sh]: its rows plus every plugin's
+c71_script() { # <name> -> the ONE path holding <name>.sh under hooks/ or plugins/*/hooks/; prints nothing on zero or several
+  c71_sn=0; c71_sp=""
+  for c71_sf in "hooks/$1.sh" plugins/*/hooks/"$1".sh; do [ -f "$c71_sf" ] && { c71_sp=$c71_sf; c71_sn=$((c71_sn + 1)); }; done
+  [ "$c71_sn" -eq 1 ] && printf '%s' "$c71_sp"
+  return 0
+}
 C71_PLUGIN_ONLY='SessionStart;;cct-session
 SessionEnd;;cct-session
+SessionStart;;cct-jev-session
+SessionEnd;;cct-jev-session
 SessionStart;;jev-notice
 PreToolUse;Agent;jev-route
-PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;gate-before-merge'
+PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;gate-before-merge
+PostToolUse;Agent;agent-result-notes
+PreToolUse;Bash;backlog-item-check
+PreToolUse;PowerShell;backlog-item-check
+PreToolUse;mcp__MCP_DOCKER__create_pull_request;backlog-item-check
+PreToolUse;mcp__MCP_DOCKER__merge_pull_request;backlog-item-check
+PreToolUse;mcp__github-tools__github_pr_auto_merge;backlog-item-check
+PreToolUse;mcp__plugin_github-tools_github-tools__github_pr_auto_merge;backlog-item-check
+SessionStart;;backlog-brief'
 c71_tmp=$(mktemp -d)
 if ! command -v node >/dev/null 2>&1; then
   ko "check 71: node is not available -- the registration extractor cannot run"
@@ -4754,26 +4807,27 @@ else
   # (form dropped: polarity lives in hooks/lib/hook-class.sh's class table) plus the plugin-only allowlist.
   # v6.0: compared PER TOOL (matchers split on `|`, a dispatcher registration expanded to one row per table guard).
   c71_want_p=$(printf '%s\n%s\n' "$(printf '%s\n' "$C71_TABLE" | grep '^general;' | awk -F';' '{print $2";"$3";"$4}')" "$C71_PLUGIN_ONLY" | c71_flat hooks/dispatch.sh | LC_ALL=C sort)
-  c71_real_p=$(c71_rows hooks/hooks.json)
-  c71_cmp "hooks/hooks.json" "$c71_real_p" "$c71_want_p"
+  c71_real_p=$(c71_urows hooks/hooks.json)
+  c71_cmp "hooks.json of cct + every plugin" "$c71_real_p" "$c71_want_p"
   # (1a) the dispatcher shape is MANDATORY: the per-tool comparison above is blind to HOW a guard is registered, so a
   # PreToolUse registration of its own whose matcher names Bash or PowerShell (any guard, any spelling) is refused --
   # such a guard would run outside the dispatcher (a second process, and it could run twice). agent-budget-warn has
   # no matcher and the Read, Edit and Agent groups name neither tool, so they stay.
   c71_loose() { c71_px "$1" | awk -F';' '$1=="PreToolUse" && $3 !~ /^dispatch:/ { n=split($2, M, "|"); for (i=1; i<=n; i++) if (M[i]=="Bash" || M[i]=="PowerShell") printf "%s(%s) ", $3, $2 }'; }
-  c71_loose_real=$(c71_loose hooks/hooks.json)
+  c71_loose_real=$(for c71_jf in $(c71_hjs); do c71_loose "$c71_jf"; done)
   [ -z "$c71_loose_real" ] || c71_bad="$c71_bad [hooks/hooks.json registers a Bash/PowerShell guard outside the dispatcher: $c71_loose_real]"
   # (1c) polarity (v5.0 fix round M4): hooks/lib/hook-class.sh's class table must equal the frozen general forms (F closed,
   # W warn, O/U open; the two plugin-only jev hooks open), name for name; flipping no-push-main to open goes red.
   c71_rhtab() { awk '/pol=/ { l=$0; sub(/\).*/, "", l); gsub(/^ +/, "", l); p=$0; sub(/.*pol=/, "", p); sub(/ .*/, "", p); n=split(l, a, "|"); for (i=1; i<=n; i++) print a[i], p }' "$1" | LC_ALL=C sort -u; }
-  c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" || $3 ~ /^dispatch:/ { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
-  c71_rh=$(c71_rhtab hooks/lib/hook-class.sh)
-  c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\n')
+  c71_shapes() { c71_px "$1" | awk -F';' -v pol="$2" 'BEGIN { n=split(pol, L, "\n"); for (i=1; i<=n; i++) { split(L[i], a, " "); P[a[1]]=a[2] } } $3=="cct-session" || $3=="cct-jev-session" || $3 ~ /^dispatch:/ { next } { want=(P[$3]=="closed") ? "G" : "B"; if ($4 != want) printf "%s(%s) ", $3, $4 }'; }
+  c71_rhall() { for c71_hf in $(c71_hcs); do c71_rhtab "$c71_hf"; done | LC_ALL=C sort; } # the union of cct's table and every plugin's; NOT deduped, so a hook listed in two tables stays a duplicate line and goes red against the frozen forms
+  c71_rh=$(c71_rhall)
+  c71_rh_want=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$1=="general" { print $4, ($5=="F" ? "closed" : $5=="W" ? "warn" : "open") }'; printf 'jev-route open\njev-notice open\nagent-result-notes open\nbacklog-item-check closed\nbacklog-brief open\n')
   c71_rh_want=$(printf '%s\n' "$c71_rh_want" | LC_ALL=C sort -u)
-  [ -n "$c71_rh" ] && [ "$c71_rh" = "$c71_rh_want" ] || c71_bad="$c71_bad [hooks/lib/hook-class.sh class/polarity table differs from the frozen forms: $(printf '%s\n' "$c71_rh_want" > "$c71_tmp/want"; printf '%s\n' "$c71_rh" > "$c71_tmp/got"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"
+  [ -n "$c71_rh" ] && [ "$c71_rh" = "$c71_rh_want" ] || c71_bad="$c71_bad [the hook-class.sh class/polarity tables (cct + every plugin) differ from the frozen forms: $(printf '%s\n' "$c71_rh_want" > "$c71_tmp/want"; printf '%s\n' "$c71_rh" > "$c71_tmp/got"; diff "$c71_tmp/want" "$c71_tmp/got" | grep '^[<>]' | tr '\n' ' ')]"
   # (1d) two-sided registration shape: a closed-class hook carries the inline existence check (G), every other one stays bare (B)
-  c71_shape=$(c71_shapes hooks/hooks.json "$c71_rh")
-  [ -z "$c71_shape" ] || c71_bad="$c71_bad [hooks/hooks.json registration shape wrong (closed needs the inline plugin-missing check G, others bare B): $c71_shape]"
+  c71_shape=$(for c71_jf in $(c71_hjs); do c71_shapes "$c71_jf" "$c71_rh"; done)
+  [ -z "$c71_shape" ] || c71_bad="$c71_bad [a hooks.json registration shape wrong (closed needs the inline plugin-missing check G, others bare B): $c71_shape]"
   c71_nrows=$(printf '%s\n' "$C71_TABLE" | grep -v '^agent:' | grep -v '^user;' | grep -c .)  # v5.0: the agent: and user; rows are no longer compared
   c71_nsc=$(printf '%s\n' "$C71_TABLE" | awk -F';' '{print $4}' | sort -u | grep -c .)
 
@@ -4787,32 +4841,40 @@ else
   for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '{print $4}' | sort -u); do
     c71_want=0
     printf '%s\n' "$C71_TABLE" | awk -F';' -v s="$c71_s" '$4==s && ($5=="F"||$5=="UF"){f=1} END{exit f?0:1}' && c71_want=1
-    c71_got=$(grep -ciE "$C2ATRAPRE" "hooks/$c71_s.sh")
-    if [ "$c71_got" != "$c71_want" ]; then c71_bad="$c71_bad [hooks/$c71_s.sh has $c71_got EXIT/0 trap(s), expected $c71_want]"; fi
+    c71_path=$(c71_script "$c71_s")
+    [ -n "$c71_path" ] || { c71_bad="$c71_bad [$c71_s.sh is not in exactly one of hooks/ and plugins/*/hooks/]"; continue; }
+    c71_got=$(grep -ciE "$C2ATRAPRE" "$c71_path")
+    if [ "$c71_got" != "$c71_want" ]; then c71_bad="$c71_bad [$c71_path has $c71_got EXIT/0 trap(s), expected $c71_want]"; fi
     if [ "$c71_want" = 1 ]; then
       c71_ntrap=$((c71_ntrap + 1))
-      [ "$(grep -c '^trap .\[ "\$?" = 127 \] && exit 2. EXIT' "hooks/$c71_s.sh")" = 1 ] || c71_bad="$c71_bad [hooks/$c71_s.sh (F/UF) lacks the 127->2 trap line]"
+      [ "$(grep -c '^trap .\[ "\$?" = 127 \] && exit 2. EXIT' "$c71_path")" = 1 ] || c71_bad="$c71_bad [$c71_path (F/UF) lacks the 127->2 trap line]"
     fi
   done
   [ "$c71_ntrap" -ge 5 ] || c71_bad="$c71_bad [only $c71_ntrap F/UF hooks found, expected at least 5: the audit is inert]"
-  [ "$(cat hooks/lib/*.sh | grep -ciE "$C2ATRAPRE")" = 0 ] || c71_bad="$c71_bad [a hooks/lib/*.sh file sets an EXIT/0 trap]"
+  [ "$(cat hooks/lib/*.sh plugins/*/hooks/lib/*.sh | grep -ciE "$C2ATRAPRE")" = 0 ] || c71_bad="$c71_bad [a hooks/lib/*.sh or plugins/*/hooks/lib/*.sh file sets an EXIT/0 trap]"
   printf 'trap -- "x" EXIT\n' > "$c71_tmp/t1.sh"; printf "trap 'x'\t0\n" > "$c71_tmp/t2.sh"; printf "trap 'echo exit 2' INT\n" > "$c71_tmp/t3.sh"
   [ "$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t1.sh")$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t2.sh")$(grep -ciE "$C2ATRAPRE" "$c71_tmp/t3.sh")" = 110 ] || c71_bad="$c71_bad [the trap regex CONTROL failed: 'trap -- ... EXIT' and a TAB-separated 'trap ... 0' must match, 'trap ... INT' must not]"
 
   # (3) no allow-capable hook is F/UF; the grep must match read-size-gate (positive control)
   C71_ALLOW='permissionDecision"?[[:space:]]*:[[:space:]]*"allow"'
-  grep -qE "$C71_ALLOW" hooks/read-size-gate.sh || c71_bad="$c71_bad [the allow grep does not match hooks/read-size-gate.sh: it is inert]"
+  c71_rsg=$(c71_script read-size-gate)
+  { [ -n "$c71_rsg" ] && grep -qE "$C71_ALLOW" "$c71_rsg"; } || c71_bad="$c71_bad [the allow grep does not match read-size-gate.sh (hooks/ or plugins/*/hooks/): it is inert]"
   for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '($5=="F"||$5=="UF"){print $4}' | sort -u); do
-    ! grep -qE "$C71_ALLOW" "hooks/$c71_s.sh" || c71_bad="$c71_bad [hooks/$c71_s.sh can emit an allow but is registered F/UF]"
+    c71_path=$(c71_script "$c71_s")
+    [ -n "$c71_path" ] || { c71_bad="$c71_bad [$c71_s.sh is not in exactly one of hooks/ and plugins/*/hooks/]"; continue; }
+    ! grep -qE "$C71_ALLOW" "$c71_path" || c71_bad="$c71_bad [$c71_path can emit an allow but is registered F/UF]"
   done
   # (4) the stop gate is U everywhere it is registered
   c71_sg=$(printf '%s\n' "$C71_TABLE" | awk -F';' '$4=="enforce-agent-contract"{print $5}')
   [ -n "$c71_sg" ] && [ "$(printf '%s\n' "$c71_sg" | sort -u)" = "U" ] || c71_bad="$c71_bad [enforce-agent-contract is not registered U (the stop gate is never wrapped): $(printf '%s' "$c71_sg" | tr '\n' ' ')]"
   # (6) no top-level return in a sourced (UF/UO/UU) hook or any lib
   c71_rf=""
-  for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '$5 ~ /^U[FOU]$/ {print $4}' | sort -u); do c71_rf="$c71_rf hooks/$c71_s.sh"; done
+  for c71_s in $(printf '%s\n' "$C71_TABLE" | awk -F';' '$5 ~ /^U[FOU]$/ {print $4}' | sort -u); do
+    c71_path=$(c71_script "$c71_s")
+    [ -n "$c71_path" ] && c71_rf="$c71_rf $c71_path" || c71_bad="$c71_bad [$c71_s.sh (sourced) is not in exactly one of hooks/ and plugins/*/hooks/]"
+  done
   [ -n "$c71_rf" ] || c71_bad="$c71_bad [no sourced hook found: the return audit is inert]"
-  c71_ret=$(awk "$C2AAWK" $c71_rf hooks/lib/*.sh)
+  c71_ret=$(awk "$C2AAWK" $c71_rf hooks/lib/*.sh plugins/*/hooks/lib/*.sh)
   [ -z "$c71_ret" ] || c71_bad="$c71_bad [top-level return in a sourced hook or lib: $(printf '%s' "$c71_ret" | tr '\n' ' ')]"
   printf 'return 5\n' > "$c71_tmp/r1.sh"
   [ "$(awk "$C2AAWK" "$c71_tmp/r1.sh" | wc -l | tr -d ' ')" = 1 ] || c71_bad="$c71_bad [the return-audit CONTROL failed: a top-level return was not reported]"
@@ -4852,7 +4914,7 @@ else
   for c71_mode in narrow dropgroup inline nopreamble badarg twice; do
     rm -f "$c71_tmp/pmut-$c71_mode.json"
     node -e "$c71_pmut" hooks/hooks.json "$c71_tmp/pmut-$c71_mode.json" "$c71_mode" 2>/dev/null
-    c71_got=""; [ -s "$c71_tmp/pmut-$c71_mode.json" ] && c71_got=$(c71_rows "$c71_tmp/pmut-$c71_mode.json" 2>/dev/null)
+    c71_got=""; [ -s "$c71_tmp/pmut-$c71_mode.json" ] && c71_got=$(c71_urows "$c71_tmp/pmut-$c71_mode.json" 2>/dev/null)
     c71_ctl "hooks.json $c71_mode" "$c71_got"
   done
   # (1a) control: the `twice` copy (deny-hang-shapes also registered on its own under Bash) must be refused by the shape rule
@@ -4861,14 +4923,40 @@ else
     || ko "check 71 control (guard outside the dispatcher): NOT refused -- the dispatcher-shape rule is vacuous"
   # (a) a dispatcher table missing pre-commit-test: a scratch copy of dispatch.sh (the tables are read from there)
   sed 's/ pre-commit-test / /' hooks/dispatch.sh > "$c71_tmp/dispatch-notab.sh"
-  c71_ctl "dispatch.sh table without pre-commit-test" "$(c71_rows hooks/hooks.json "$c71_tmp/dispatch-notab.sh" 2>/dev/null)"
-  # (8b) controls for (1c)/(1d): no-push-main flipped to open in a hook-class.sh copy; a closed hook registered bare
+  c71_ctl "dispatch.sh table without pre-commit-test" "$(c71_urows hooks/hooks.json "$c71_tmp/dispatch-notab.sh" 2>/dev/null)"
+  # v7.0.0 (union controls, so a plugin's rows are in every mutated set and the comparison cannot differ merely for lack of them):
+  # a plugin's registration group dropped, and a plugin's matcher narrowed, must each leave the union differing from the expected set.
+  c71_pg=plugins/cct-guards/hooks/hooks.json
+  c71_pgmut='const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const g=d.hooks.PostToolUse;const i=g.findIndex(x=>x.matcher==="Edit|Write");if(i<0)process.exit(1);if(process.argv[3]==="drop")g.splice(i,1);else g[i].matcher="Edit";fs.writeFileSync(process.argv[2],JSON.stringify(d,null,2));'
+  for c71_mode in drop narrow; do
+    rm -f "$c71_tmp/pg-$c71_mode.json"
+    node -e "$c71_pgmut" "$c71_pg" "$c71_tmp/pg-$c71_mode.json" "$c71_mode" 2>/dev/null
+    c71_got=""; [ -s "$c71_tmp/pg-$c71_mode.json" ] && c71_got=$({ c71_rows hooks/hooks.json; c71_rows "$c71_tmp/pg-$c71_mode.json"; } | LC_ALL=C sort)
+    c71_ctl "plugin hooks.json $c71_mode" "$c71_got"
+  done
+  # (8b) controls for (1c)/(1d): no-push-main flipped to open in a hook-class.sh copy (cct's table; the union is rebuilt with
+  # every plugin's real table); a plugin's table flipped (read-size-gate warn -> open); a closed hook registered bare
   sed 's/^\( *no-push-main|deny-secret-reads).*pol=\)closed/\1open/' hooks/lib/hook-class.sh > "$c71_tmp/rh-flip.sh"
-  c71_got=$(c71_rhtab "$c71_tmp/rh-flip.sh")
+  c71_got=$({ c71_rhtab "$c71_tmp/rh-flip.sh"; for c71_hf in plugins/*/hooks/lib/hook-class.sh; do c71_rhtab "$c71_hf"; done; } | LC_ALL=C sort)
   if [ -n "$c71_got" ] && [ "$c71_got" != "$c71_rh_want" ]; then
     ok "check 71 control (hook-class.sh polarity flip): no-push-main turned open differs from the frozen forms"
   else
     ko "check 71 control (hook-class.sh polarity flip): the flip was NOT detected -- the polarity comparison is vacuous"
+  fi
+  sed 's/^\( *read-size-gate|agent-budget-warn).*pol=\)warn/\1open/' plugins/cct-guards/hooks/lib/hook-class.sh > "$c71_tmp/rh-pflip.sh"
+  c71_got=$({ c71_rhtab hooks/lib/hook-class.sh; c71_rhtab "$c71_tmp/rh-pflip.sh"; } | LC_ALL=C sort)
+  if ! cmp -s "$c71_tmp/rh-pflip.sh" plugins/cct-guards/hooks/lib/hook-class.sh && [ -n "$c71_got" ] && [ "$c71_got" != "$c71_rh_want" ]; then
+    ok "check 71 control (plugin hook-class.sh polarity flip): read-size-gate turned open differs from the frozen forms"
+  else
+    ko "check 71 control (plugin hook-class.sh polarity flip): the flip was NOT detected -- the plugin table is not compared"
+  fi
+  # a hook listed in BOTH cct's table and a plugin's (enforce-delegation, same polarity as cct's) must not be absorbed by the union
+  sed 's/^\( *read-size-gate|agent-budget-warn)\)/    enforce-delegation)  cls=project; pol=warn ;;\n\1/' plugins/cct-guards/hooks/lib/hook-class.sh > "$c71_tmp/rh-dup.sh"
+  c71_got=$({ c71_rhtab hooks/lib/hook-class.sh; c71_rhtab "$c71_tmp/rh-dup.sh"; } | LC_ALL=C sort)
+  if ! cmp -s "$c71_tmp/rh-dup.sh" plugins/cct-guards/hooks/lib/hook-class.sh && [ -n "$c71_got" ] && [ "$c71_got" != "$c71_rh_want" ]; then
+    ok "check 71 control (a hook in two class tables): enforce-delegation listed by cct and a plugin differs from the frozen forms"
+  else
+    ko "check 71 control (a hook in two class tables): NOT detected -- the union is deduplicated"
   fi
   node -e 'const fs=require("fs");const GP="f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; [ -r \"$f\" ] || { echo \"BLOCKED: cct plugin files are missing (the plugin was upgraded or removed while this session ran) -- restart this session.\" >&2; exit 2; }; exec \"${BASH:-bash}\" \"$f\" ";const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));for(const g of d.hooks.PreToolUse)for(const h of g.hooks)if(h.command.startsWith(GP+"deny-secret-reads"))h.command="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\" deny-secret-reads";fs.writeFileSync(process.argv[2],JSON.stringify(d))' hooks/hooks.json "$c71_tmp/bare-closed.json" 2>/dev/null
   if [ -n "$(c71_shapes "$c71_tmp/bare-closed.json" "$c71_rh")" ]; then
@@ -4897,15 +4985,15 @@ fi
 # ---------------------------------------------------------------------------
 # Check 67 -- the coder's `## Working rules`, `## Skills (...)` and `## Report
 # (HARD REQUIREMENT)` sections are byte-identical in every coder file
-# (v4.5.0 A1/A2/B1; v5.0: the plugin's agents/coder.md and agents/*-coder.md, reference
+# (v4.5.0 A1/A2/B1; v5.0: the plugin's agents/coder.md and plugins/*/agents/*-coder.md, reference
 # agents/coder.md -- the template and user-level copies are gone). The digest replaced the karpathy-guidelines preload and
 # the Report is what hooks/enforce-agent-contract.sh checks, so one drifted
 # copy silently changes one coder. Each section runs from its heading to the
 # next `## `. Control: a section that extracts 0 B from the reference copy is
 # a failure, never a pass.
 # ---------------------------------------------------------------------------
-note "Check 67: the coder's Working rules / Skills / Report sections are byte-identical across agents/coder.md and agents/*-coder.md"
-c67_files=$(ls agents/coder.md agents/*-coder.md 2>/dev/null)
+note "Check 67: the coder's Working rules / Skills / Report sections are byte-identical across agents/coder.md and plugins/*/agents/*-coder.md"
+c67_files=$(ls agents/coder.md plugins/*/agents/*-coder.md 2>/dev/null)
 c67_count=$(printf '%s\n' "$c67_files" | grep -c .)
 c67_sec() { # <file> <heading line> -> the section, heading included
   awk -v h="$2" 'index($0, h) == 1 { f = 1; print; next } f && /^## / { exit } f { print }' "$1"
@@ -4920,9 +5008,9 @@ for c67_h in '## Working rules' '## Skills (open one only when its trigger fires
   for c67_f in $c67_files; do
     [ "$(c67_sec "$c67_f" "$c67_h")" = "$c67_ref" ] || c67_bad="$c67_bad $c67_f"
   done
-  c67_want=$(( $(ls agents/*-coder.md 2>/dev/null | wc -l) + 1 ))
+  c67_want=$(( $(ls plugins/*/agents/*-coder.md 2>/dev/null | wc -l) + 1 ))
   if [ "$c67_count" -lt 2 ] || [ "$c67_count" -ne "$c67_want" ]; then
-    ko "check 67: found $c67_count coder files, expected $c67_want (agents/coder.md, agents/*-coder.md)"
+    ko "check 67: found $c67_count coder files, expected $c67_want (agents/coder.md, plugins/*/agents/*-coder.md)"
   elif [ -n "$c67_bad" ]; then
     ko "check 67: '$c67_h' differs from agents/coder.md's copy in:$c67_bad"
   else
@@ -4944,7 +5032,7 @@ note "Check 68: no workflow file carries '## Required Skills', require-skills-bl
 C68_LITERALS='## Required Skills|require-skills-block|\.gate/last-pass'
 c68_n=0
 c68_bad=""
-for c68_f in $(for v in $VARIANTS; do printf '%s\n' "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md" "templates/$v/.claude/settings.json"; done) agents/*.md; do
+for c68_f in $(for v in $VARIANTS; do printf '%s\n' "templates/$v/AGENT_TEAM.md" "templates/$v/CLAUDE.md" "templates/$v/.claude/settings.json"; done) agents/*.md plugins/*/agents/*.md; do
   [ -f "$c68_f" ] || { ko "check 68: $c68_f missing"; continue; }
   c68_n=$((c68_n + 1))
   if grep -qE "$C68_LITERALS" "$c68_f"; then
@@ -4986,12 +5074,13 @@ c72_ctl=$(c72_eval "$c72_tmp")
 rm -rf "$c72_tmp"
 c72_real=$(c72_eval .)
 c72_name=$(node -e 'process.stdout.write(String(require("./.claude-plugin/plugin.json").name||""))' 2>/dev/null)
+c72_missing=$(for n in git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning cct-helpers cct-jev; do [ -f "plugins/$n/.claude-plugin/plugin.json" ] || printf " %s" "$n"; grep -q "\"name\": \"$n\", \"source\": \"./plugins/$n\"" .claude-plugin/marketplace.json || printf " %s(marketplace)" "$n"; done)
 if [ -z "$c72_first" ] || [ "${c72_ctl#*|}" = "0" ]; then
   ko "72: CONTROL failed (one sub-plugin at a version other than VERSION was not flagged; fixture '$c72_ctl')"
-elif [ -n "$c72_want" ] && [ "$c72_real" = "7|0" ] && [ "$c72_name" = "cct" ]; then
-  ok "72: cct plus 6 sub-plugin plugin.json files all carry version $c72_want (= VERSION); control fires"
+elif [ -n "$c72_want" ] && [ "$c72_real" = "12|0" ] && [ "$c72_name" = "cct" ] && [ -z "$c72_missing" ]; then
+  ok "72: cct plus 11 sub-plugin (the six MCP plugins, java-tools, cct-guards, cct-learning, cct-helpers and cct-jev) plugin.json files all carry version $c72_want (= VERSION); control fires"
 else
-  ko "72: expected 7 plugin.json (cct + 6 sub-plugins) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name'"
+  ko "72: expected 12 plugin.json (cct + 11 sub-plugins: git-tools github-tools dotnet-tools ollama-tools rust-tools python-tools java-tools cct-guards cct-learning cct-helpers cct-jev) at version '$c72_want' (VERSION); got count|bad '$c72_real', cct name '$c72_name', missing:$c72_missing"
 fi
 
 # ---------------------------------------------------------------------------
@@ -5036,8 +5125,8 @@ if grep -q 'hooks/dispatch\.sh' hooks/hooks.json; then
   [ "$(c71_dtab hooks/dispatch.sh | awk '{print $1}' | sort -u | tr '\n' ' ')" = "bash powershell " ] || c74_bad="$c74_bad dispatch.sh-lacks-the-bash-and-powershell-tables"
   # v6.0 D2: the ORDER of the tables is pinned (the closed git gates run first, so an open guard can never keep one from running).
   # The lists below are the expectation the tables are held to, not a second source: the tables are still read from dispatch.sh.
-  c74_d2_bash='no-push-main deny-secret-reads gate-before-merge pre-commit-test deny-hang-shapes enforce-delegation'
-  c74_d2_ps='no-push-main gate-before-merge pre-commit-test'
+  c74_d2_bash='no-push-main deny-secret-reads gate-before-merge backlog-item-check pre-commit-test deny-hang-shapes enforce-delegation'
+  c74_d2_ps='no-push-main gate-before-merge backlog-item-check pre-commit-test'
   c74_tab() { c71_dtab "$1" | awk -v t="$2" '$1==t { printf "%s%s", (n++ ? " " : ""), $2 }'; } # <dispatch.sh> <table>
   c74_d2_ok() { [ "$(c74_tab "$1" bash)" = "$c74_d2_bash" ] && [ "$(c74_tab "$1" powershell)" = "$c74_d2_ps" ]; }
   c74_d2_ok hooks/dispatch.sh || c74_bad="$c74_bad dispatch.sh-tables-differ-from-D2(bash:$(c74_tab hooks/dispatch.sh bash);powershell:$(c74_tab hooks/dispatch.sh powershell))"
@@ -5050,27 +5139,157 @@ if grep -q 'hooks/dispatch\.sh' hooks/hooks.json; then
 fi
 if [ -z "$c74_bad" ]; then ok "74: hooks.json names $(echo $c74_names | wc -w) hooks, all present and classed"; else ko "74: hooks.json/run-hook.sh:$c74_bad"; fi
 
+# Check 74, per plugin (v7.0.0): every plugin that ships hooks (plugins/*/hooks/hooks.json) is held to the same rule on its OWN
+# files: each hook its hooks.json names exists next to it, its run-hook.sh and lib/hook-class.sh are there, and the hooks
+# named equal the hooks its own class table lists, both ways. Two-sided: a copy whose table lacks one hook, and a copy missing
+# one script, are flagged.
+# A plugin that writes its own session marker (cct-jev: cct-jev-session.sh) is held to the pin the cct marker has above: SessionStart
+# (no argument) writes, SessionEnd (`end`, with a 2..60 s timeout) removes, and each is registered exactly once.
+c74_sesspin() { # <hooks.json> <script name, e.g. cct-jev-session.sh> -> "ok ok" when the pair and the timeout are right
+  node -e '
+const h=require(require("path").resolve(process.argv[1])).hooks||{}, sc=process.argv[2];
+const cmds=e=>[].concat(...(h[e]||[]).map(g=>(g.hooks||[]).map(x=>x.command||""))).filter(c=>c.includes(sc));
+const all=Object.keys(h).reduce((n,e)=>n+cmds(e).length,0);
+const s=cmds("SessionStart"), d=cmds("SessionEnd");
+const w="bash \"${CLAUDE_PLUGIN_ROOT}/hooks/"+sc+"\"";
+const t=[].concat(...(h.SessionEnd||[]).map(g=>g.hooks||[])).filter(x=>(x.command||"").includes(sc));
+process.stdout.write((s.length===1&&s[0]===w&&d.length===1&&d[0]===w+" end"&&all===2?"ok":"bad")+" "+(t.length===1&&t[0].timeout>=2&&t[0].timeout<=60?"ok":"bad"));
+' "$1" "$2" 2>/dev/null
+}
+c74_plug() { # <plugin root> -> the problems found, nothing when clean
+  c74_pb=""
+  if grep -q 'cct-jev-session\.sh' "$1/hooks/hooks.json" 2>/dev/null; then
+    c74_ps=$(c74_sesspin "$1/hooks/hooks.json" cct-jev-session.sh)
+    case "$c74_ps" in "ok "*) ;; *) c74_pb="$c74_pb cct-jev-session.sh-not-registered-as-SessionStart(no-arg)+SessionEnd(end)" ;; esac
+    case "$c74_ps" in *" ok") ;; *) c74_pb="$c74_pb cct-jev-session.sh-SessionEnd-timeout-missing-or-outside-2..60s" ;; esac
+    [ -f "$1/hooks/cct-jev-session.sh" ] || c74_pb="$c74_pb missing:cct-jev-session"
+  fi
+  c74_pnm=$(grep -oE 'run-hook\.sh\\" [a-z-]+' "$1/hooks/hooks.json" 2>/dev/null | awk '{print $2}' | sort -u)
+  c74_pcl=$(sed -n '/^ *case "\$1" in/,/^ *esac/p' "$1/hooks/lib/hook-class.sh" 2>/dev/null | grep -o '^ *[a-z|-][a-z|-]*)' | tr -d ' )' | tr '|' '\n' | sort -u)
+  [ -n "$c74_pnm" ] || c74_pb="$c74_pb no-hook-named"
+  for c74_pk in $c74_pnm; do [ -f "$1/hooks/$c74_pk.sh" ] || c74_pb="$c74_pb missing:$c74_pk"; done
+  [ -f "$1/hooks/run-hook.sh" ] || c74_pb="$c74_pb missing:run-hook"
+  [ "$c74_pnm" = "$c74_pcl" ] || c74_pb="$c74_pb hooks.json-vs-hook-class.sh-class-table-differ"
+  printf '%s' "$c74_pb"
+}
+c74_pbad=""; c74_pcount=0; c74_pnames=0
+for c74_pj in plugins/*/hooks/hooks.json; do
+  [ -f "$c74_pj" ] || continue
+  c74_pr=${c74_pj%/hooks/hooks.json}; c74_pcount=$((c74_pcount + 1))
+  c74_one=$(c74_plug "$c74_pr")
+  [ -z "$c74_one" ] || c74_pbad="$c74_pbad [$c74_pr:$c74_one]"
+  c74_pnames=$((c74_pnames + $(grep -oE 'run-hook\.sh\\" [a-z-]+' "$c74_pj" | sort -u | grep -c .)))
+done
+c74_ptmp=$(mktemp -d)
+if [ -d plugins/cct-guards ]; then
+  cp -R plugins/cct-guards "$c74_ptmp/a"; sed -i '/^ *bash-output-guard)/d' "$c74_ptmp/a/hooks/lib/hook-class.sh"
+  cp -R plugins/cct-guards "$c74_ptmp/b"; rm -f "$c74_ptmp/b/hooks/post-edit-build.sh"
+  cp -R plugins/cct-guards "$c74_ptmp/c"; rm -f "$c74_ptmp/c/hooks/run-hook.sh"
+fi
+# cct-jev's marker pair: a SessionEnd without its `end` argument (the writer would re-create the marker at SessionEnd), a
+# SessionEnd without a timeout, and a deleted writer must each be flagged
+if [ -d plugins/cct-jev ]; then
+  cp -R plugins/cct-jev "$c74_ptmp/d"; sed -i 's#cct-jev-session.sh\\" end#cct-jev-session.sh\\"#' "$c74_ptmp/d/hooks/hooks.json"
+  cp -R plugins/cct-jev "$c74_ptmp/e"; sed -i 's#, "timeout": 5 }$# }#' "$c74_ptmp/e/hooks/hooks.json"
+  cp -R plugins/cct-jev "$c74_ptmp/f"; rm -f "$c74_ptmp/f/hooks/cct-jev-session.sh"
+fi
+c74_ctl_a=$(c74_plug "$c74_ptmp/a"); c74_ctl_b=$(c74_plug "$c74_ptmp/b"); c74_ctl_c=$(c74_plug "$c74_ptmp/c")
+c74_ctl_d=$(c74_plug "$c74_ptmp/d"); c74_ctl_e=$(c74_plug "$c74_ptmp/e"); c74_ctl_f=$(c74_plug "$c74_ptmp/f")
+rm -rf "$c74_ptmp"
+if [ "$c74_pcount" -lt 1 ]; then
+  ko "74 (per plugin): no plugins/*/hooks/hooks.json found -- the per-plugin rule is inert"
+elif [ -z "$c74_ctl_a" ] || [ -z "$c74_ctl_b" ] || [ -z "$c74_ctl_c" ] || [ -z "$c74_ctl_d" ] || [ -z "$c74_ctl_e" ] || [ -z "$c74_ctl_f" ]; then
+  ko "74 (per plugin): CONTROL failed (a table missing one hook, a missing script, a missing run-hook.sh, a SessionEnd without its end argument, a SessionEnd without a timeout and a missing marker writer must each be flagged; got '$c74_ctl_a' | '$c74_ctl_b' | '$c74_ctl_c' | '$c74_ctl_d' | '$c74_ctl_e' | '$c74_ctl_f')"
+elif [ -z "$c74_pbad" ]; then
+  ok "74 (per plugin): $c74_pcount plugin(s) with hooks name $c74_pnames hook(s), all present next to their own run-hook.sh and classed in their own table; controls fire"
+else
+  ko "74 (per plugin):$c74_pbad"
+fi
+
 # ---------------------------------------------------------------------------
 # Check 75 (v5.0, spec §5): no plugin agent carries frontmatter hooks: (F4: silently ignored)
+# v7.0.0: the language plugins' agents (plugins/*/agents/*.md) are plugin agents too. Control: a copy of one
+# of them with a `hooks:` frontmatter line must be flagged.
 # ---------------------------------------------------------------------------
-c75=$(for f in agents/*.md; do awk 'NR==1&&/^---$/{fm=1;next} fm&&/^---$/{exit} fm&&/^hooks:/{print FILENAME}' "$f"; done)
+c75_scan() { for f in "$@"; do awk 'NR==1&&/^---$/{fm=1;next} fm&&/^---$/{exit} fm&&/^hooks:/{print FILENAME}' "$f"; done; }
+c75=$(c75_scan agents/*.md plugins/*/agents/*.md)
+c75_tmp=$(mktemp -d)
+c75_first=$(ls plugins/*/agents/*.md 2>/dev/null | head -1)
+[ -n "$c75_first" ] && sed '1a hooks:' "$c75_first" > "$c75_tmp/planted.md"
+c75_ctl=$(c75_scan "$c75_tmp/planted.md" 2>/dev/null)
+rm -rf "$c75_tmp"
 if [ -z "$(ls agents/*.md 2>/dev/null)" ]; then ko "75: agents/ has no *.md (the check would pass vacuously)"
-elif [ -z "$c75" ]; then ok "75: no agents/*.md carries frontmatter hooks:"
+elif [ -z "$c75_first" ]; then ko "75: no plugins/*/agents/*.md (the language coders moved there; the check would pass vacuously)"
+elif [ -z "$c75_ctl" ]; then ko "75: CONTROL failed (a plugin agent copy with a hooks: frontmatter line was not flagged)"
+elif [ -z "$c75" ]; then ok "75: no agents/*.md or plugins/*/agents/*.md carries frontmatter hooks:; control fires"
 else ko "75: frontmatter hooks: in $c75"; fi
 
 # ---------------------------------------------------------------------------
-# Check 76 (v5.0, spec §2): every cct:<agent> the docs mention exists in agents/
+# Check 76 (v5.0, spec §2): every cct:<agent>, cct:<skill> and <plugin>:<skill> the docs mention exists
 # ---------------------------------------------------------------------------
-c76_bad=""; c76_n=0
-for n in $(grep -rhoE 'cct:[A-Za-z][A-Za-z-]*' templates user-level-reference skills agents README.md AGENTS.md 2>/dev/null | sort -u); do
-  c76_n=$((c76_n + 1))
-  # skill names (cct:<skill>) are the directories under skills/
-  [ -d "skills/${n#cct:}" ] && continue
-  # and output styles (outputStyle "cct:<style>") are the files under output-styles/
-  [ -f "output-styles/${n#cct:}.md" ] && continue
-  [ -f "agents/${n#cct:}.md" ] || c76_bad="$c76_bad $n"
+#
+# The files scanned are the shipped ones plus the docs: templates, user-level-reference, skills, agents, plugins, docs,
+# mcp-servers, .claude/skills, README.md and AGENTS.md. History (docs/history.md), reports (docs/self-review/), plans
+# (docs/plans/) and fixtures are excluded: they name parts under the names they had then. One more file is exempt, by its
+# exact path: skills/sync-template/old-names.sh, the table of pre-v7 names the sync warns about (its whole job is to name
+# them). SKILL.md and every other file stay scanned; the controls below pin both arms.
+c76_mentions() { # <root> <ERE> -> the distinct matches in the scanned files under <root>
+  ( cd "$1" && find templates user-level-reference skills agents plugins docs mcp-servers .claude/skills README.md AGENTS.md -type f -print0 2>/dev/null \
+      | grep -zvE '^(docs/history\.md|docs/self-review/|docs/plans/|scripts/fixtures/|server/tests/fixtures/|skills/sync-template/old-names\.sh$)' \
+      | xargs -0 -r grep -hoE "$2" 2>/dev/null | sort -u )
+}
+c76_scan() { # <root> -> one line per mention that names nothing under <root>
+  local r=$1 n p pn
+  for n in $(c76_mentions "$r" 'cct:[A-Za-z][A-Za-z-]*'); do
+    # skill names (cct:<skill>) are the directories under skills/, output styles (outputStyle "cct:<style>") the files
+    # under output-styles/, agents the files under agents/
+    [ -d "$r/skills/${n#cct:}" ] || [ -f "$r/output-styles/${n#cct:}.md" ] || [ -f "$r/agents/${n#cct:}.md" ] || echo "$n"
+  done
+  # v7.0.0: the language coders left agents/. A stale `cct:<lang>-coder` mention is flagged by the loop above (no
+  # agents/<lang>-coder.md); a `<lang>-tools:<lang>-coder` mention must name a file under plugins/<lang>-tools/agents/.
+  for n in $(c76_mentions "$r" '[a-z]+-tools:[a-z]+-coder'); do
+    [ -f "$r/plugins/${n%%:*}/agents/${n#*:}.md" ] || echo "$n"
+  done
+  # v6.3: skills moved to optional plugins (cct-helpers, cct-learning). A stale `cct:<skill>` mention is flagged by the
+  # first loop (no skills/<skill>); a `<plugin>:<skill>` mention must name a directory under plugins/<plugin>/skills/.
+  for p in "$r"/plugins/*/skills; do
+    [ -d "$p" ] || continue
+    pn=$(basename "$(dirname "$p")")
+    for n in $(c76_mentions "$r" "$pn:[A-Za-z][A-Za-z-]*"); do
+      [ -d "$p/${n#*:}" ] || echo "$n"
+    done
+  done
+}
+c76_ctl() { # <relative path> <text> -> c76_scan of a root whose only mention is <text> in <path>
+  local t; t=$(mktemp -d)
+  mkdir -p "$t/skills/sprint" "$t/agents" "$t/output-styles" "$t/plugins/cct-helpers/skills/commit" "$(dirname "$t/$1")"
+  printf '%s\n' "$2" > "$t/$1"
+  c76_scan "$t" | tr '\n' ' '; rm -rf "$t"
+}
+c76_ctl_bad=""
+# stale mentions must be flagged wherever a doc, a repo skill or a plugin can carry them ...
+for c76_p in docs/guide.md mcp-servers/HOWTO.md .claude/skills/x/SKILL.md plugins/cct-helpers/skills/commit/SKILL.md skills/sprint/SKILL.md skills/sync-template/SKILL.md templates/general/CLAUDE.md; do
+  [ "$(c76_ctl "$c76_p" 'run /cct:commit')" = "cct:commit " ] || c76_ctl_bad="$c76_ctl_bad $c76_p"
 done
-[ -z "$c76_bad" ] && ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen)" || ko "76: unknown agents:$c76_bad"
+[ "$(c76_ctl docs/guide.md 'run /cct-helpers:ghost')" = "cct-helpers:ghost " ] || c76_ctl_bad="$c76_ctl_bad cct-helpers:ghost"
+[ -z "$(c76_ctl docs/guide.md 'run /cct-helpers:commit')" ] || c76_ctl_bad="$c76_ctl_bad cct-helpers:commit(false positive)"
+# ... and left alone in history, reports, plans and fixtures
+for c76_p in docs/history.md docs/self-review/r.md docs/plans/p.md skills/sync-template/old-names.sh; do
+  [ -z "$(c76_ctl "$c76_p" 'run /cct:commit')" ] || c76_ctl_bad="$c76_ctl_bad $c76_p(excluded)"
+done
+c76_bad=$(c76_scan . | tr '\n' ' ')
+c76_n=$(c76_mentions . 'cct:[A-Za-z][A-Za-z-]*' | wc -l)
+c76_pn=$(c76_mentions . '[a-z]+-tools:[a-z]+-coder' | wc -l)
+c76_hn=$(c76_mentions . 'cct-helpers:[A-Za-z][A-Za-z-]*' | wc -l)
+[ "$c76_pn" -gt 0 ] || c76_bad="$c76_bad (no <lang>-tools:<lang>-coder mention found: the plugin-name scan is vacuous)"
+[ "$c76_hn" -gt 0 ] || c76_bad="$c76_bad (no cct-helpers:<skill> mention found: the plugin-skill scan is vacuous)"
+if [ -n "$c76_ctl_bad" ]; then
+  ko "76: CONTROL failed (a stale cct:commit must be flagged in a doc, repo skill, plugin or template and ignored in history, reports, plans and skills/sync-template/old-names.sh only):$c76_ctl_bad"
+elif [ -z "$c76_bad" ]; then
+  ok "76: every cct:<agent> mentioned exists in agents/ ($c76_n distinct cct: mentions seen), every <lang>-tools:<lang>-coder in plugins/ ($c76_pn), every <plugin>:<skill> in plugins/<plugin>/skills/ ($c76_hn for cct-helpers); docs, mcp-servers, .claude/skills and plugins scanned; control fires"
+else
+  ko "76: unknown agents or skills: $c76_bad"
+fi
 
 # ---------------------------------------------------------------------------
 # Check 77 (v5.0 fix round 1): every `claude-code-toolkit#vX.Y.Z` pin literal in the user-facing docs
@@ -5123,12 +5342,14 @@ else ok "79: no hooks.json registration starts a bare 'exec bash '"; fi
 # Check 80 (v6.1): every plugins/*/.mcp.json pins ONE tagged mcp-dev-servers commit (v0.4.0), runs it with uvx,
 # names its own script, is listed in the marketplace at ./plugins/<dir>, and its plugin.json description names uv.
 # Two-sided: fixtures with a wrong SHA, a wrong script name and a description without uv must each be flagged.
+# v7.0.0: only the plugin folders that hold a .mcp.json are MCP plugins (java-tools ships an agent and no server);
+# the control mutates the first of those, and the expected count stays 6.
 # ---------------------------------------------------------------------------
 C80_SHA=0a20b97dd42733c629e369e16f4e79af81f93d47
 # prints the plugin count, then one line per problem, for the tree rooted at $1
 c80_eval() {
   node -e 'const fs=require("fs"),path=require("path");const r=process.argv[1],sha=process.argv[2];
-const pd=path.join(r,"plugins");const dirs=fs.existsSync(pd)?fs.readdirSync(pd).sort():[];
+const pd=path.join(r,"plugins");const dirs=fs.existsSync(pd)?fs.readdirSync(pd).sort().filter(d=>fs.existsSync(path.join(pd,d,".mcp.json"))):[];
 let mk={plugins:[]};try{mk=JSON.parse(fs.readFileSync(path.join(r,".claude-plugin/marketplace.json"),"utf8"));}catch(e){}
 const out=[];
 for(const d of dirs){
@@ -5151,7 +5372,7 @@ c80_n=$(printf '%s\n' "$c80_real" | head -1)
 c80_probs=$(printf '%s\n' "$c80_real" | tail -n +2)
 c80_tmp=$(mktemp -d)
 c80_ctl_ok=1
-c80_first=$(ls plugins 2>/dev/null | head -1)
+c80_first=$(for c80_d in plugins/*/; do [ -f "${c80_d}.mcp.json" ] && basename "$c80_d"; done | head -1)
 if [ -z "$c80_first" ]; then c80_ctl_ok=0; else
   for c80_mut in sha name desc; do
     rm -rf "$c80_tmp/t"; mkdir -p "$c80_tmp/t/.claude-plugin"
@@ -5294,6 +5515,314 @@ else
   fi
 fi
 rm -rf "${c82_tmp:?}"
+
+# ---------------------------------------------------------------------------
+# Check 83 -- onFailure on the fail-closed guard registrations (self-review item 2;
+# Claude Code 2.1.295 / 2.1.329): a hook that fails to start, exits other than 0
+# or 2, or times out lets the action go ahead unless the handler says
+# "onFailure": "block". Polarity is per hook: the fail-closed guards must carry
+# it, every other handler (advisory, fail-open by design, SessionStart,
+# PostToolUse, Stop, SubagentStop) must not. The guard set is keyed by the name
+# found in the command string; the expected counts stop a removed handler from
+# passing vacuously. Scanned: the plugin hooks/hooks.json, the repo
+# .claude/settings.json, and templates/general/.claude/settings.json, whose one
+# guard is the inline plugin-off guard (keyed by its refusal text; the other five
+# variants are byte-identical to it, which another check asserts). Controls: a copy
+# with the key removed from gate-before-merge, a copy with it added to
+# deny-hang-shapes, and a template copy with it removed from the plugin-off guard,
+# must each be flagged.
+# ---------------------------------------------------------------------------
+note "Check 83: onFailure block on the fail-closed guard registrations (and only those)"
+C83_JS='const fs = require("fs");
+const [mode, file, out, target, op] = process.argv.slice(1);
+const d = JSON.parse(fs.readFileSync(file, "utf8"));
+const G = /(dispatch\.sh|deny-secret-reads|deny-claude-md-writes|gate-before-merge|pre-commit-test|no-push-main|backlog-item-check|the cct plugin is not active)/;
+let guards = 0; const bad = [];
+for (const ev of Object.keys(d.hooks || {}))
+  for (const g of d.hooks[ev])
+    for (const h of g.hooks) {
+      const cmd = String(h.command || "");
+      if (mode === "mutate") {
+        if (cmd.includes(target)) { if (op === "add") h.onFailure = "block"; else delete h.onFailure; }
+        continue;
+      }
+      const isG = G.test(cmd);
+      if (isG) guards++;
+      if (isG && ev !== "PreToolUse") bad.push(ev + ": guard outside PreToolUse: " + cmd.slice(0, 60));
+      else if (isG && h.onFailure !== "block") bad.push(ev + "/" + (g.matcher || "") + ": guard without onFailure block: " + G.exec(cmd)[1]);
+      else if (!isG && h.onFailure !== undefined) bad.push(ev + "/" + (g.matcher || "") + ": non-guard handler carries onFailure: " + cmd.slice(0, 60));
+    }
+if (mode === "mutate") { fs.writeFileSync(out, JSON.stringify(d, null, 2)); }
+else { console.log(guards); for (const b of bad) console.log(b); }'
+c83_scan() { node -e "$C83_JS" scan "$1"; }                    # line 1 = guard count, then one line per violation
+c83_mut()  { node -e "$C83_JS" mutate "$1" "$2" "$3" "$4"; }   # file out target add|del
+c83_tmp=$(mktemp -d)
+if ! command -v node >/dev/null 2>&1; then
+  ko "check 83: node is not available -- the onFailure scan cannot run"
+else
+  c83_fail=0
+  for c83_pair in "hooks/hooks.json 7" ".claude/settings.json 7" "templates/general/.claude/settings.json 1"; do
+    c83_f=${c83_pair% *}; c83_want=${c83_pair#* }
+    c83_res=$(c83_scan "$c83_f" 2>&1)
+    c83_n=$(printf '%s\n' "$c83_res" | head -1)
+    c83_v=$(printf '%s\n' "$c83_res" | tail -n +2)
+    if [ "$c83_n" != "$c83_want" ]; then
+      ko "check 83: $c83_f has $c83_n fail-closed guard handlers, expected $c83_want (a guard was added, removed or renamed)"; c83_fail=1
+    elif [ -n "$c83_v" ]; then
+      ko "check 83: $c83_f: $(printf '%s' "$c83_v" | tr '\n' ' ')"; c83_fail=1
+    fi
+  done
+  c83_mut .claude/settings.json "$c83_tmp/a.json" gate-before-merge del
+  c83_mut .claude/settings.json "$c83_tmp/b.json" deny-hang-shapes add
+  if ! c83_scan "$c83_tmp/a.json" | tail -n +2 | grep -q 'gate-before-merge'; then
+    ko "check 83 control: a copy without onFailure on gate-before-merge was NOT flagged -- the predicate is vacuous"; c83_fail=1
+  fi
+  if ! c83_scan "$c83_tmp/b.json" | tail -n +2 | grep -q 'non-guard handler'; then
+    ko "check 83 control: a copy with onFailure on deny-hang-shapes was NOT flagged -- the predicate is vacuous"; c83_fail=1
+  fi
+  c83_mut templates/general/.claude/settings.json "$c83_tmp/c.json" "the cct plugin is not active" del
+  if ! c83_scan "$c83_tmp/c.json" | tail -n +2 | grep -q 'guard without onFailure block: the cct plugin is not active'; then
+    ko "check 83 control: a template copy without onFailure on the plugin-off guard was NOT flagged -- the predicate is vacuous"; c83_fail=1
+  fi
+  if [ "$c83_fail" -eq 0 ]; then
+    ok "check 83: the 7 plugin, the 7 repo and the template plugin-off fail-closed guard handlers carry onFailure block, no other handler does; all three controls fire"
+  fi
+fi
+rm -rf "${c83_tmp:?}"
+
+# ---------------------------------------------------------------------------
+# Check 84 (v7.0.0, model ladder): hooks/agent-result-notes.sh -- the step-up note -- is registered exactly once, as
+# PostToolUse with matcher Agent, through run-hook.sh, and carries NO onFailure. It is advisory (class project,
+# polarity open): a hook that failed to start must let the spawn's result through, and onFailure block would turn a
+# broken note into a blocked Agent result. Check 83 flags a non-guard onFailure too; this one also pins WHERE the
+# hook is registered, which no other check does (check 71 pins the name, not the event). Control: a copy with
+# "onFailure": "block" added to that handler is flagged.
+# ---------------------------------------------------------------------------
+note "Check 84: agent-result-notes is registered as PostToolUse Agent, once, without onFailure"
+C84_JS='const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+const R = /^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/run-hook\.sh" agent-result-notes$/;
+let n = 0; const bad = [];
+for (const ev of Object.keys(d.hooks || {}))
+  for (const g of d.hooks[ev])
+    for (const h of g.hooks) {
+      if (!R.test(String(h.command || ""))) continue;
+      n++;
+      if (ev !== "PostToolUse" || g.matcher !== "Agent") bad.push("registered under " + ev + "/" + (g.matcher || "") + ", not PostToolUse/Agent");
+      if (h.onFailure !== undefined) bad.push("carries onFailure " + JSON.stringify(h.onFailure));
+    }
+if (n !== 1) bad.push("registered " + n + " times, expected 1");
+console.log(bad.join("; "));'
+c84_tmp=$(mktemp -d)
+if ! command -v node >/dev/null 2>&1; then
+  ko "check 84: node is not available -- the registration scan cannot run"
+else
+  c84_v=$(node -e "$C84_JS" hooks/hooks.json 2>&1)
+  c83_mut hooks/hooks.json "$c84_tmp/a.json" agent-result-notes add
+  c84_ctl=$(node -e "$C84_JS" "$c84_tmp/a.json" 2>&1)
+  if [ -n "$c84_v" ]; then
+    ko "check 84: hooks/hooks.json: $c84_v"
+  elif ! printf '%s' "$c84_ctl" | grep -q 'carries onFailure'; then
+    ko "check 84 control: a copy with onFailure block added to agent-result-notes was NOT flagged -- the predicate is vacuous"
+  else
+    ok "check 84: agent-result-notes is registered once as PostToolUse Agent with no onFailure; the control (onFailure block added) is flagged"
+  fi
+fi
+rm -rf "${c84_tmp:?}"
+
+# ---------------------------------------------------------------------------
+# Check 85 (v7.0.0, backlog discipline): the backlog shape ships.
+#   (a) the six templates' PROJECT_STATE.md and this repo's root PROJECT_STATE.md carry, under "## Backlog", the
+#       three subsections "### Untriaged", "### Ranked", "### Done", in that order and nothing else at ### level;
+#   (b) templates/general/AGENT_TEAM.md carries the "## Backlog" heading and the three rules the item check
+#       (hooks/backlog-item-check.sh, a later task) enforces;
+#   (d) skills/sync-template/SKILL.md does not tell a sync to create its PR with "gh pr create --fill" -- a
+#       generated body has no "Item: none" line, so the item check would refuse every sync PR; and its
+#       "gh pr create" lines name at least one --body-file, none of whose arguments holds a $ or a ~ (the item check
+#       refuses a body-file path it cannot resolve, so a "${TMPDIR:-/tmp}/..." path is refused on every sync PR);
+#   (e) controls: a temp copy of a template without "### Ranked" is reported, so (a) cannot pass vacuously; a temp
+#       copy of the skill with a "$TMPDIR" body-file path is reported, so the (d) path test cannot either.
+# ---------------------------------------------------------------------------
+note "Check 85: backlog shape -- PROJECT_STATE.md subsections, AGENT_TEAM.md rules, sync PR without --fill, plain --body-file"
+c85_bfs() { # <file> -> the --body-file arguments on its "gh pr create" lines, one per line
+  grep 'gh pr create' "$1" | grep -o -e '--body-file[= ][^ ]*'
+}
+c85_shape() { # <file> -> prints the ### headings under "## Backlog", joined by "|"
+  awk '/^## /{in_b = ($0 == "## Backlog"); next} in_b && /^### /{printf "%s%s", sep, $0; sep="|"}' "$1"
+}
+c85_want="### Untriaged|### Ranked|### Done"
+c85_fail=0
+for c85_f in $(for v in $VARIANTS; do echo "templates/$v/PROJECT_STATE.md"; done) PROJECT_STATE.md; do
+  if [ ! -f "$c85_f" ]; then
+    ko "check 85 (a): $c85_f is missing"; c85_fail=1
+  elif [ "$(c85_shape "$c85_f")" != "$c85_want" ]; then
+    ko "check 85 (a): $c85_f has Backlog subsections '$(c85_shape "$c85_f")', expected '$c85_want'"; c85_fail=1
+  fi
+done
+for c85_s in '^## Backlog$' 'Before picking the next task, groom the backlog' 'One item = one pull request' 'Grooming lands on the trunk before any helper starts'; do
+  if ! grep -q -- "$c85_s" templates/general/AGENT_TEAM.md; then
+    ko "check 85 (b): templates/general/AGENT_TEAM.md lacks '$c85_s'"; c85_fail=1
+  fi
+done
+if grep -q 'gh pr create --fill' skills/sync-template/SKILL.md; then
+  ko "check 85 (d): skills/sync-template/SKILL.md still creates the sync PR with 'gh pr create --fill' (use --body-file with an 'Item: none' line)"; c85_fail=1
+fi
+if [ -z "$(c85_bfs skills/sync-template/SKILL.md)" ]; then
+  ko "check 85 (d): skills/sync-template/SKILL.md has no 'gh pr create ... --body-file' line"; c85_fail=1
+elif c85_bfs skills/sync-template/SKILL.md | grep -q '[$~]'; then
+  ko "check 85 (d): skills/sync-template/SKILL.md passes --body-file a path holding a \$ or ~ ($(c85_bfs skills/sync-template/SKILL.md | grep '[$~]' | head -1)); the item check refuses it: pass a plain absolute path"; c85_fail=1
+fi
+c85_tmp=$(mktemp -d)
+grep -v '^### Ranked' templates/general/PROJECT_STATE.md > "$c85_tmp/PROJECT_STATE.md"
+if [ "$(c85_shape "$c85_tmp/PROJECT_STATE.md")" = "$c85_want" ]; then
+  ko "check 85 control: a copy without '### Ranked' was NOT reported -- the shape predicate is vacuous"; c85_fail=1
+fi
+{ cat skills/sync-template/SKILL.md; printf '%s\n' 'gh pr create --body-file "$TMPDIR/sync-pr-body.md"'; } > "$c85_tmp/SKILL.md"
+if ! c85_bfs "$c85_tmp/SKILL.md" | grep -q '[$~]'; then
+  ko "check 85 control: a skill copy with a \$TMPDIR body-file path was NOT reported -- the (d) path test is vacuous"; c85_fail=1
+fi
+rm -rf "${c85_tmp:?}"
+[ "$c85_fail" -eq 0 ] && ok "check 85: 7 PROJECT_STATE.md carry Untriaged/Ranked/Done in order, AGENT_TEAM.md carries the backlog rules, the sync skill does not use --fill and passes --body-file plain paths; both controls fire"
+
+# ---------------------------------------------------------------------------
+# Check 86 (v6.3, backlog discipline): hooks/backlog-brief.sh (session-start line, advisory) reads `Task source` with
+# a copy of hooks/backlog-item-check.sh's bic_mode, so the line and the guard can never disagree about the mode. The
+# two function bodies (from `bic_mode() {` to the first closing brace at column 0) must be byte-identical, each file
+# defines it exactly once, and a mutated copy is reported, so the comparison cannot pass vacuously.
+# ---------------------------------------------------------------------------
+note "Check 86: backlog-brief.sh carries a byte-for-byte copy of backlog-item-check.sh's bic_mode"
+c86_fn() { awk '/^bic_mode\(\) \{$/ { on = 1 } on { print } on && /^\}$/ { exit }' "$1"; }
+c86_fail=0
+for c86_f in hooks/backlog-item-check.sh hooks/backlog-brief.sh; do
+  if [ "$(grep -c '^bic_mode() {$' "$c86_f")" -ne 1 ]; then
+    ko "check 86: $c86_f does not define bic_mode exactly once"; c86_fail=1
+  fi
+done
+c86_a=$(c86_fn hooks/backlog-item-check.sh)
+c86_b=$(c86_fn hooks/backlog-brief.sh)
+if [ -z "$c86_a" ] || [ "$c86_a" != "$c86_b" ]; then
+  ko "check 86: bic_mode in hooks/backlog-brief.sh differs from hooks/backlog-item-check.sh (or is empty) -- the two must stay byte-identical"; c86_fail=1
+fi
+c86_tmp=$(mktemp -d)
+sed 's/plan-files/plan-filez/' hooks/backlog-brief.sh > "$c86_tmp/backlog-brief.sh"
+if [ "$(c86_fn "$c86_tmp/backlog-brief.sh")" = "$c86_a" ]; then
+  ko "check 86 control: a copy with a changed mode word was NOT reported -- the comparison is vacuous"; c86_fail=1
+fi
+rm -rf "${c86_tmp:?}"
+[ "$c86_fail" -eq 0 ] && ok "check 86: bic_mode is defined once in each of backlog-item-check.sh and backlog-brief.sh and the two bodies are byte-identical; control fires"
+
+# ---------------------------------------------------------------------------
+# Check 87 (v7.0.0, agent type table): the table in hooks/lib/agent-model.sh (am_table) is pinned, both ways, to the
+# agent files' frontmatter. Every agent file (agents/*.md as cct:<name>, plugins/<plugin>/agents/*.md as
+# <plugin>:<name>) must be a row whose model, effort and pipeline equal its frontmatter, and every row must name a
+# file. A row that drifts from its file would make the model floor, the step-up note and the contract gate answer
+# for an agent that is not the one that runs; an agent without a row is silent on all three. Control: a copy of the
+# agent tree with one frontmatter value edited (model, effort, then pipeline) must be flagged each time.
+# ---------------------------------------------------------------------------
+c87_eval() { # <root> -> one PROBLEM line per disagreement, then "COUNT <files>|<rows>"; the table is always the real lib
+  ( . hooks/lib/agent-model.sh
+    r=$1; nf=0; nr=0; seen=" "
+    for f in "$r"/agents/*.md "$r"/plugins/*/agents/*.md; do
+      [ -f "$f" ] || continue
+      nf=$((nf + 1))
+      case "$f" in "$r"/plugins/*) p=${f#"$r"/plugins/}; p=${p%%/*} ;; *) p=cct ;; esac
+      t="$p:$(am_fm "$f" name)"; seen="$seen$t "
+      if ! am_table "$t"; then printf 'PROBLEM %s: no row in the table\n' "$t"; continue; fi
+      [ "$AM_T_MODEL" = "$(am_fm "$f" model)" ]    || printf 'PROBLEM %s: model %s != file %s\n' "$t" "$AM_T_MODEL" "$(am_fm "$f" model)"
+      [ "$AM_T_EFFORT" = "$(am_fm "$f" effort)" ]  || printf 'PROBLEM %s: effort %s != file %s\n' "$t" "$AM_T_EFFORT" "$(am_fm "$f" effort)"
+      [ "$AM_T_PIPE" = "$(am_fm "$f" pipeline)" ]  || printf 'PROBLEM %s: pipeline %s != file %s\n' "$t" "$AM_T_PIPE" "$(am_fm "$f" pipeline)"
+    done
+    for t in $(grep -oE '^    [A-Za-z][A-Za-z0-9-]*:[A-Za-z][A-Za-z0-9-]*\)' hooks/lib/agent-model.sh | tr -d ' )'); do
+      nr=$((nr + 1))
+      case "$seen" in *" $t "*) ;; *) printf 'PROBLEM %s: a row with no agent file\n' "$t" ;; esac
+    done
+    printf 'COUNT %s|%s\n' "$nf" "$nr"
+  )
+}
+c87_real=$(c87_eval .)
+c87_probs=$(printf '%s\n' "$c87_real" | grep '^PROBLEM' | sed 's/^PROBLEM //' | tr '\n' ';')
+c87_counts=$(printf '%s\n' "$c87_real" | sed -n 's/^COUNT //p')
+c87_tmp=$(mktemp -d)
+c87_ctl_ok=1
+for c87_mut in model effort pipeline delete extra; do
+  rm -rf "$c87_tmp/t"; mkdir -p "$c87_tmp/t"; cp -r agents "$c87_tmp/t/"; cp -r plugins "$c87_tmp/t/"
+  case $c87_mut in
+    model)    sed -i 's/^model: sonnet$/model: opus/' "$c87_tmp/t/plugins/dotnet-tools/agents/dotnet-coder.md" ;;
+    effort)   sed -i 's/^effort: medium$/effort: high/' "$c87_tmp/t/agents/coder.md" ;;
+    pipeline) sed -i 's/^pipeline: true$/pipeline: notify/' "$c87_tmp/t/plugins/java-tools/agents/java-coder.md" ;;
+    delete)   rm "$c87_tmp/t/plugins/rust-tools/agents/rust-coder.md" ;;
+    extra)    sed "s/^name: java-coder$/name: java-extra/" "$c87_tmp/t/plugins/java-tools/agents/java-coder.md" > "$c87_tmp/t/plugins/java-tools/agents/java-extra.md" ;;
+  esac
+  c87_one=$(c87_eval "$c87_tmp/t" | grep -c '^PROBLEM')
+  [ "$c87_one" -ge 1 ] || c87_ctl_ok=0
+done
+rm -rf "$c87_tmp"
+if [ "$c87_ctl_ok" -ne 1 ]; then ko "check 87: CONTROL failed (an edited model, effort or pipeline value, a deleted agent file, or an agent file with no row was not flagged)"
+elif [ "$c87_counts" != "10|10" ]; then ko "check 87: expected 10 agent files and 10 table rows, got files|rows '$c87_counts' (a new agent needs a row in am_table, and this count)"
+elif [ -n "$c87_probs" ]; then ko "check 87: the agent type table and the agent files disagree: $c87_probs"
+else ok "check 87: all 10 agent type table rows equal their agent file's model, effort and pipeline, and every agent file is a row; control fires on model, effort, pipeline, a deleted file and a file without a row"; fi
+
+# ---------------------------------------------------------------------------
+# Check 88 (v7.0.0, slim core): pinned plugin copies. A plugin's hooks can only rely on files inside that plugin, so every
+# plugin that ships hooks (plugins/*/hooks/hooks.json) carries its OWN copy of cct's run-hook.sh and of the hooks/lib files its
+# hooks use. Each copy must be byte-identical to the original in hooks/ -- the way the six templates are pinned -- so a fix to
+# the original cannot leave a stale copy behind. The one exception is lib/hook-class.sh, whose class-table DATA lines
+# (`name|name)  cls=...; pol=... ;;`; each plugin lists only its own hooks, and check 74 pins that table to the plugin's hooks.json)
+# are left out of the comparison: the rest -- `case`, the `*) return 1 ;;` default arm, `esac`, hc_skip -- must be identical.
+# Every plugin with hooks must also carry, on its own, run-hook.sh, lib/hook-class.sh, lib/json.sh and every lib its scripts name.
+# TWO-SIDED: a copy with one changed byte, a hook-class.sh copy with a changed hc_skip line or a default arm changed to
+# `return 0`, and a plugin without lib/json.sh, are flagged; a hook-class.sh copy with a changed TABLE line is not.
+# ---------------------------------------------------------------------------
+echo
+note "Check 88: pinned plugin copies (run-hook.sh and hooks/lib/*.sh in every plugin with hooks equal cct's; hook-class.sh outside its table)"
+c88_strip() { sed '/cls=[a-z]*; pol=[a-z]* ;;$/d' "$1" > "$2"; } # <hook-class.sh> <out>: the file without its class-table DATA lines; `case`, the `*) return 1 ;;` default arm and `esac` stay compared, so a copy that fails open on unknown names is flagged
+c88_eval() { # <tree root> -> one PROBLEM line per copy that differs, then "COUNT <plugins>|<files compared>"
+  c88_np=0; c88_nf=0
+  for c88_d in "$1"/plugins/*/hooks; do
+    [ -f "$c88_d/hooks.json" ] || continue
+    c88_np=$((c88_np + 1))
+    # per plugin (not a global floor): run-hook.sh, hook-class.sh and json.sh at least, plus every lib a script of the plugin names
+    for c88_r in run-hook.sh lib/hook-class.sh lib/json.sh $(grep -ohE 'lib/[A-Za-z0-9_-]+\.sh' "$c88_d"/*.sh 2>/dev/null | sort -u); do
+      [ -f "$c88_d/$c88_r" ] || echo "PROBLEM ${c88_d#$1/}/$c88_r is missing (every plugin with hooks carries it)"
+    done
+    for c88_f in "$c88_d/run-hook.sh" "$c88_d"/lib/*.sh; do
+      [ -f "$c88_f" ] || { echo "PROBLEM ${c88_f#$1/} is missing"; continue; }
+      c88_rel=${c88_f#$c88_d/}; c88_nf=$((c88_nf + 1))
+      if [ "$c88_rel" = lib/hook-class.sh ]; then
+        c88_strip "$c88_f" "$c88_tmp/cp.txt"; c88_strip "$1/hooks/$c88_rel" "$c88_tmp/orig.txt"
+        cmp -s "$c88_tmp/cp.txt" "$c88_tmp/orig.txt" || echo "PROBLEM ${c88_f#$1/} differs from hooks/$c88_rel outside its class table"
+      else
+        cmp -s "$c88_f" "$1/hooks/$c88_rel" || echo "PROBLEM ${c88_f#$1/} differs from hooks/$c88_rel"
+      fi
+    done
+  done
+  echo "COUNT $c88_np|$c88_nf"
+}
+c88_tmp=$(mktemp -d)
+c88_real=$(c88_eval .)
+c88_probs=$(printf '%s\n' "$c88_real" | grep '^PROBLEM' | sed 's/^PROBLEM //' | tr '\n' ';')
+c88_counts=$(printf '%s\n' "$c88_real" | sed -n 's/^COUNT //p')
+c88_ctl_ok=1; c88_ctl_why=""
+c88_mk() { rm -rf "$c88_tmp/t"; mkdir -p "$c88_tmp/t"; cp -R hooks "$c88_tmp/t/hooks"; cp -R plugins "$c88_tmp/t/plugins"; } # a scratch tree: cct's hooks/ and every plugin
+c88_P=plugins/cct-guards/hooks
+c88_mk; printf 'x' >> "$c88_tmp/t/$c88_P/lib/json.sh"
+[ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [one changed byte in a lib copy]"; }
+c88_mk; printf 'x' >> "$c88_tmp/t/$c88_P/run-hook.sh"
+[ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [one changed byte in run-hook.sh]"; }
+c88_mk; sed -i 's/"\$HC_CLS" = project/"$HC_CLS" = machine/' "$c88_tmp/t/$c88_P/lib/hook-class.sh"
+[ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [a changed hc_skip line in hook-class.sh]"; }
+c88_mk; sed -i 's/^\( *\*) return \)1 ;;/\10 ;;/' "$c88_tmp/t/$c88_P/lib/hook-class.sh"
+grep -q '\*) return 0 ;;' "$c88_tmp/t/$c88_P/lib/hook-class.sh" && [ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [the default arm *) return 1 changed to return 0 in hook-class.sh]"; }
+c88_mk; rm -f "$c88_tmp/t/$c88_P/lib/json.sh"
+[ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [lib/json.sh deleted from a plugin]"; }
+c88_mk; sed -i 's/pol=open ;;/pol=warn ;;/' "$c88_tmp/t/$c88_P/lib/hook-class.sh"
+[ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -eq 0 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [a changed TABLE line in hook-class.sh was flagged: the table is data]"; }
+rm -rf "$c88_tmp"
+if [ "$c88_ctl_ok" -ne 1 ]; then ko "check 88: CONTROL failed:$c88_ctl_why"
+elif [ "${c88_counts%%|*}" -lt 3 ] || [ "${c88_counts##*|}" -lt 11 ]; then ko "check 88: expected at least 3 plugins with hooks (cct-guards, cct-learning, cct-jev) and 11 pinned copies (run-hook.sh, json.sh and hook-class.sh in each, git-cmd.sh in cct-guards, agent-model.sh in cct-jev), got plugins|files '$c88_counts'"
+elif [ -n "$c88_probs" ]; then ko "check 88: a pinned plugin copy differs from cct's original: $c88_probs"
+else ok "check 88: $c88_counts (plugins|files): every pinned copy equals cct's original (hook-class.sh outside its class table); controls fire on a changed byte, a changed hc_skip line, a changed default arm and a deleted lib, and stay quiet on a changed table line"
+fi
+
 
 # ---------------------------------------------------------------------------
 echo

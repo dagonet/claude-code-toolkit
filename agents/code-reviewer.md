@@ -110,12 +110,14 @@ Your final message MUST be exactly one of:
 1. A findings list in the format above — every finding carries a **Severity** tag (critical | warning | suggestion) and a `file:line` locator; or
 2. The single word `clean` — meaning you completed the full review and found nothing to report.
 
+Either form may end with one optional block for things worth doing later that are not findings: a line exactly `Follow-ups:`, then `- <item>` lines. After `clean` it is the only thing that may follow. The orchestrator adds each item to the backlog as untriaged.
+
 Ending your run without one of these (going idle, returning only progress notes, or summarizing without findings) is a **failed review**: the PO treats the review as not done and re-dispatches it. Never end on "review in progress" or an empty message.
 
 **Subagent reporting (HARD REQUIREMENT):** your final message IS the deliverable — end your run with the full report in it. There is no side channel: a run that ends without a report is treated as failed and re-dispatched.
 
 ## Liveness & Scope (HARD REQUIREMENT)
 
-**Report in your final message:** the PO reads your final message, nothing else — no progress channel exists. Put the whole result there. If `hooks/agent-budget-warn.sh` warns that you are near the tool-call budget, stop exploring, wrap up, and report what you have plus what is left.
+**Report in your final message:** the PO reads your final message, nothing else — no progress channel exists. Put the whole result there. If `cct-guards` is installed and its `agent-budget-warn` warns that you are near the tool-call budget, stop exploring, wrap up, and report what you have plus what is left.
 
 **Scope abort:** if the task grows past its stated scope — extra files, a second root cause, a redesign — stop, report what is done plus the blocker, and let the PO re-tier. Do not expand scope inside one spawn. A long run is not evidence of progress.

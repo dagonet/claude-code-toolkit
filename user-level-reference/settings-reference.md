@@ -282,7 +282,7 @@ Events used by this toolkit:
 | Event | When It Fires | Can Block? | Why it matters |
 |-------|--------------|-----------|----------------|
 | `Stop` | Main thread finishes its response | Yes | The only lead-side gate available. Stdin carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `stop_hook_active`. |
-| `SessionStart` | A session begins | — | **Bound in v2.0** to `hooks/retro-brief.sh`, and since v4.5.0 (matcher `compact`) to `hooks/now-brief.sh`; since v5.0 the cct plugin also binds `cct-session.sh` (the session marker), `verify-hooks.sh` and `jev-notice.sh` here. stdout is injected into the session context. |
+| `SessionStart` | A session begins | — | **Bound in v2.0** to `retro-brief` (now in the optional `cct-learning` plugin, if installed), and since v4.5.0 (matcher `compact`) to `hooks/now-brief.sh`; since v5.0 the cct plugin also binds `cct-session.sh` (the session marker) and `verify-hooks.sh` here, and the optional `cct-jev` plugin binds `cct-jev-session.sh` (its own marker) and `jev-notice.sh`. stdout is injected into the session context. |
 | `TaskCreated` / `TaskCompleted` | Task created / marked complete | Yes | `TaskCompleted` stdin carries `task_id`, `task_subject`, `task_description` — but **not** the task result, so it cannot judge report substance without reading the transcript itself. |
 | `SubagentStart` | A subagent is spawned | — | Counterpart to `SubagentStop`. |
 
@@ -296,7 +296,7 @@ The authoritative list is the settings schema, not the docs — a bad event name
 |-------|---|
 | `Stop` | `stop_hook_active`, `effort`, `session_crons`, `last_assistant_message` (full final message text), `background_tasks` (`[{id, type, status, description}]`) |
 | `TaskCreated` / `TaskCompleted` | `task_id`, `task_subject`, `task_description`. No task result — cannot inspect a completion's output without reading the transcript. |
-| `SubagentStop` | `agent_id`, `agent_type`, `agent_transcript_path` (the SUBAGENT's own JSONL, not the session's), `last_assistant_message`. This is what `hooks/retro-ledger.sh` reads. |
+| `SubagentStop` | `agent_id`, `agent_type`, `agent_transcript_path` (the SUBAGENT's own JSONL, not the session's), `last_assistant_message`. This is what `retro-ledger` (if `cct-learning` is installed) reads. |
 | `PreToolUse` | `tool_name`, `tool_input`, `tool_use_id`, `effort`, and — inside a subagent — `agent_id` and `agent_type`. Main-thread calls carry neither, which makes `agent_id` a sound main-vs-agent discriminator. |
 
 #### Key Fields
@@ -352,32 +352,40 @@ The cct plugin registers the following workflow enforcement hooks (scripts in th
 
 All of these hooks parse JSON through `hooks/lib/json.sh`, which uses node, python3 or jq (whichever is installed), and run from the installed plugin; since v5.0 setup copies only `hooks/git-pre-push.sh`, `hooks/lib/git-cmd.sh` and `hooks/lib/json.sh` into a project. Hook stdin nests tool arguments under `.tool_input`; the scripts read `.tool_input.<field>` with a top-level fallback for older harnesses. See `docs/hook-enforcement-ideas.md` for the full evaluation of which workflow rules are enforceable via hooks.
 
-### Read Size Gate (PreToolUse, registered by the cct plugin)
+### Read Size Gate (PreToolUse, registered by the optional `cct-guards` plugin, if `cct-guards` is installed)
 
-**Read size gate** (`hooks/read-size-gate.sh`):
+**Read size gate** (`plugins/cct-guards/hooks/read-size-gate.sh`, if `cct-guards` is installed):
 - Matcher: `Read`
 - **Caps** rather than blocks (v2.0 PR3). An unbounded `Read` whose remaining length (`file_lines - offset`) exceeds the threshold (default `500`) is rewritten via `hookSpecificOutput.updatedInput` to carry `limit: 500`, plus an `additionalContext` naming the offset to pass next. The call proceeds; nothing is refused.
 - `updatedInput` **replaces the whole input object**, so the hook copies the original `tool_input` wholesale (`Object.assign`) — `pages` and any future field survive.
 - Silent pass when: `limit` is already set, the file is short, the path is missing/unreadable, or the extension is `png|jpg|jpeg|gif|pdf|ipynb` (not line-addressable).
 - Over 10 MB the cap is decided from `stat` alone (`File is N MB; capped at 500 lines…`): no offset can bring the remainder under the cap, and counting lines would mean scanning every byte on a hook that fires on every Read. One node process per call, payload on stdin.
 - Rationale: the Read tool accounts for ~22% of session context per `docs/plans/2026-04-14-context-baseline.md`, and 5,032 of 10,336 measured Read calls passed no `limit`. Blocking cost a round trip per call and taught nothing; rewriting is invisible and always makes progress.
-- Never exits non-zero, so it is registered fail-open: on a missing script `run-hook.sh` prints `WARN: <path> missing -- read-size-gate offline. Reinstall the cct plugin (claude plugin uninstall cct@dagonet, then claude plugin install cct@dagonet).` and exits 0.
+- Never exits non-zero, so it is registered fail-open: on a missing script `run-hook.sh` prints `WARN: <path> missing -- read-size-gate offline. Reinstall the plugin that registers this hook (claude plugin uninstall it, then claude plugin install it again).` and exits 0.
 - Appends tab-separated CAP decisions to `~/.claude/state/read-size-gate.log`. Log append is best-effort — write failures never mask the decision.
 - Parses JSON through `hooks/lib/json.sh` (node, python3 or jq). Style-matches `no-push-main.sh`.
 
-**Install scope (v5.0): the cct plugin registers it machine-wide** (`hooks/hooks.json`); there is no user-level copy to install. The 22% Read-tool share is paid in target-project sessions, which the plugin covers.
+**Install scope (v7.0.0): if `cct-guards` is installed, that plugin registers it machine-wide** (`plugins/cct-guards/hooks/hooks.json`); there is no user-level copy to install. The 22% Read-tool share is paid in target-project sessions, which the plugin covers.
 
 **Threshold tuning:** the script hard-codes `THRESHOLD=500` near the top. Edit the value directly. The log at `~/.claude/state/read-size-gate.log` provides per-decision data for post-sprint histogramming if you want to calibrate the threshold from real use rather than a gut number.
 
-### Bash Output Guard (PostToolUse, registered by the cct plugin)
+### Bash Output Guard (PostToolUse, registered by the optional `cct-guards` plugin, if `cct-guards` is installed)
 
-**Hook** (`hooks/bash-output-guard.sh`), matcher `Bash|PowerShell`:
+**Hook** (`plugins/cct-guards/hooks/bash-output-guard.sh`, if `cct-guards` is installed), matcher `Bash|PowerShell`:
 - Reads `tool_response` from stdin. Observed shape (2.1.250): `{stdout, stderr, interrupted, isImage, noOutputExpected}`.
 - `stdout` and `stderr` are checked independently. A stream over 12,000 chars is written to `$TMPDIR/claude-bash-out-$UID/<session_id>-<epoch>[-stderr].log` and the transcript gets first 4,000 chars + `…[N chars truncated — full output|stderr: <path>]…` + last 4,000, returned as `hookSpecificOutput.updatedToolOutput`. The object keeps the original shape (sibling fields copied) — a mismatched shape corrupts the tool result.
 - The payload is piped to `node` on stdin, not passed in argv: a 200 KB build log exceeds the platform argument limits, and an exec failure here would silently pass the untruncated output through.
 - Both streams short, a missing `tool_response`, or an unparseable payload → no output at all, the result passes through untouched.
 - Always exits 0; `run-hook.sh` gives it the silent-0 polarity: it cannot block, so a fail-closed form would only invent a failure mode.
 - Rollback: there is no per-hook switch in the plugin; disable the plugin, or override with a project registration of your own copy (the plugin then steps aside). Old log files are never pruned — clear `$TMPDIR/claude-bash-out-$UID/` yourself if it grows.
+
+**PostToolUse `Agent` payload (read from the docs 2026-11-22, no live session):** source <https://code.claude.com/docs/en/hooks> (sections *PostToolUse input*, *Agent*, *Add context for Claude*; raw `hooks.md`).
+- Report text: `tool_response.content`, an **array of text blocks** (`[{"type": "text", "text": "..."}]`), beside `status`, `agentId`, `resolvedModel`, usage fields. Not a bare string. A failed call gives `tool_response` as an error string. A subagent that reports through `SubagentHandback` (auto mode) has only a short hand-back note in `content`; the report is in the `SubagentHandback` call's `tool_input.message`.
+- Background spawns (`run_in_background: true`): the hook fires at launch with `status: "async_launched"`, `agentId`, `description`, `prompt`, `outputFile`, `resolvedModel` and **no `content`**; the final report never reaches PostToolUse. Only a foreground call gives `status: "completed"` with the report.
+- Follow-ups note (v6.3): `hooks/agent-result-notes.sh` rule `anr_followups` reads the same `tool_response.content` for a reviewer or tester report holding a `Follow-ups:` block; it therefore covers foreground spawns only (a background spawn carries no report).
+- `tool_input` original or rewritten by `updatedInput`: **not documented.** The docs call it "the arguments sent to the tool"; read `resolvedModel` for the model the run used, which "can differ from the `model` value in `tool_input`".
+- Add context: `{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "<string>"}}`; the string is wrapped in a system reminder next to the tool result; over 10,000 chars it is written to a file and a 2,000-char preview is passed.
+- `SubagentStop` as a fallback for background spawns (same page, *SubagentStop*): its input carries `agent_id`, `agent_type`, `agent_transcript_path` and `last_assistant_message` (the subagent's final text; for a `SubagentHandback` subagent only its closing text, not the report). It carries **no model field**; the common fields have no `model` either. It cannot reach the parent: `additionalContext` there "keeps the subagent running", `decision: "block"` + `reason` goes "to the subagent as its next instruction", and `systemMessage` is a user-facing warning. The docs say outright: "To inject context into the parent session after a subagent returns, use a `PostToolUse` hook on the `Agent` tool instead." A parent-side event for a delivered background result (task-notification, `SubagentHandback`): **not documented**; `SubagentHandback` is hookable only as a tool (`PreToolUse`/`PostToolUse`, report in `tool_input.message`), inside the subagent.
 
 ### Time hook (UserPromptSubmit, User-Level)
 
@@ -407,4 +415,4 @@ Use **aliases** (`opus`, `sonnet`, `haiku`, `fable`, `inherit`), never a full `c
 - **Main-thread edits** are allowed only on the PO write surface (`docs/plans/`, `PROJECT_STATE.md`, `PROJECT_CONTEXT.md`, `.claude/`, `CLAUDE.md` (pre-v4 manifests only; under manifest v4 write `.claude/project-instructions.md` — `deny-claude-md-writes.sh` enforces it), `CLAUDE.local.md`, `AGENT_TEAM.md`, paths outside the repo). Everything else denies with a model-visible DELEGATE message naming the right agent. Handles `notebook_path` (NotebookEdit) and backslash Windows paths.
 - **Main-thread Bash** denies build/test-runner commands (`npm test`, `npm run test|build|e2e|coverage`, `npx vitest|jest|playwright`, `pytest`, `cargo test|build|run`, `dotnet build|test|run`, `mvn`, `gradlew`, `go test`) AND `hooks/run-gate.sh` — the PO verifies via the `<common git dir>/gate/last-pass.<sha>.json` artifact, never by running the suite. (It matches the `hooks/run-gate.sh` path, not the `cct-gate` command: a PO's `cct-gate` is not denied, a known gap since v5.0.)
 - **Kill-switch:** create `.claude/delegation-off` at the repo root to disable (also the recovery if a pre-`agent_id` CLI ever denies subagent calls).
-- **Failure polarity — deliberately fail-OPEN:** never apply the exit-2 127-wrapper (a missing script would block ALL edits including subagents' — total paralysis, same class as the SubagentStop stop-gate). `run-hook.sh` uses a **fail-open WARN form** instead: a missing script prints `WARN: <path> missing -- enforce-delegation offline. Reinstall the cct plugin (...)` to stderr and exits 0 — visible, never blocking. Internal parse failures pass through. Note: main-thread Bash-git stays guarded regardless — the three git gates (fail-closed) fire on the same Bash matcher.
+- **Failure polarity — deliberately fail-OPEN:** never apply the exit-2 127-wrapper (a missing script would block ALL edits including subagents' — total paralysis, same class as the SubagentStop stop-gate). `run-hook.sh` uses a **fail-open WARN form** instead: a missing script prints `WARN: <path> missing -- enforce-delegation offline. Reinstall the plugin that registers this hook (...)` to stderr and exits 0 — visible, never blocking. Internal parse failures pass through. Note: main-thread Bash-git stays guarded regardless — the three git gates (fail-closed) fire on the same Bash matcher.

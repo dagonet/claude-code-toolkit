@@ -88,7 +88,7 @@ Three scripts run from the toolkit root. All three are safe to run at any time a
 |---|---|---|
 | `bash scripts/verify-template-consistency.sh` | the six variants agree on everything that must be identical, every literal a hook greps still exists, and the bootstrap fixtures pass (it invokes `scripts/test-setup-project.sh` as check 27 — the `setup-project.{sh,ps1}` dry-run and real-run paths must agree) | a real regression — fix before committing |
 | `bash scripts/test-hooks.sh` | every hook decides correctly on real stdin fixtures, including the must-**not**-block cases | a real regression — fix before committing |
-| `bash scripts/verify-user-level-drift.sh` | your live `~/.claude/CLAUDE.md` matches the released reference, `cct@dagonet` is installed and enabled at that release's `VERSION`, and no v4.x user-level leftover remains | usually just *"you have not synced yet"* — see the polarity note below |
+| `bash scripts/verify-user-level-drift.sh` | your live `~/.claude/CLAUDE.md` matches the released reference, `cct@dagonet` is installed and enabled at that release's `VERSION`, no v4.x user-level leftover remains, and every dagonet plugin that `enabledPlugins` enables is installed (the installed optional plugins are listed on an `OPTIONAL PLUGINS` line, information only; a plugin installed at another version is drift even when disabled, and an install record at project scope only counts as installed) | usually just *"you have not synced yet"* — see the polarity note below |
 
 **Probing the merge gate from inside a guarded session blocks itself — that block IS the positive result.** A probe that builds a payload containing the literal `git merge` is matched by the real PreToolUse hook on the command constructing it, not on any merge. The git gates are fail-CLOSED and scan the whole command string on purpose, so that `bash -c "…"` wrapper forms cannot evade them; a false positive on a probe is the accepted price and is itself proof the hook fires. Do not synthesise a payload to "really" test it — a real command, really blocked, with real shas in the message (`BLOCKED: Gate artifact is stale (artifact sha: …, HEAD: …)`) is the better evidence. Where a synthetic probe genuinely is needed, drive the script from outside the session rather than inline in a command string.
 
@@ -133,12 +133,12 @@ They are split by what each can *reach*, not by preference:
   `VERSION`-vs-latest-tag comparison. Silent when everything passes; on failure it opens
   or retitles a single GitHub issue `nightly-check: <date>`. A routine sees only the
   clone and its connectors — never `~/.claude`, never uncommitted files.
-- **the `retro-review` skill** (`/cct:retro-review [project-dir]`) — the local counterpart,
+- **the `retro-review` skill** (`/cct-learning:retro-review [project-dir]`, if `cct-learning` is installed) — the local counterpart,
   covering exactly what a routine cannot see: the per-project retro ledger under
   `~/.claude/projects/<slug>/memory/`, `verify-user-level-drift.sh` against the live
   `~/.claude/`, and sibling checkouts whose `.claude/template-manifest.json` is behind
   this repo's `VERSION`. Run it headless with
-  `env -u CLAUDE_CODE_SESSION_ID claude -p "/cct:retro-review" --permission-mode auto` from Task Scheduler or cron
+  `env -u CLAUDE_CODE_SESSION_ID claude -p "/cct-learning:retro-review" --permission-mode auto` from Task Scheduler or cron
   (from inside a session, the `env -u` stops the nested run deleting that session's cct marker).
 
 ## Terminal conditions in a `**Gate**` command
@@ -202,11 +202,25 @@ This is also why the proposed `hooks/local/` extension point was **cancelled**: 
 `**Gate**` already does the job, and the one thing it could not express — the terminal
 exit — is expressible with the variable that was already there.
 
+## Backlog discipline (v7.0.0)
+
+Three hooks, one rule: every pull request names a backlog item. See the three rows at the end of the Hooks table in `docs/architecture.md`.
+
+- **`hooks/backlog-item-check.sh`** refuses a PR that names no item, with a message starting `BLOCKED: backlog-item-check:` that names the fix. It reads `**Task source**` in the repo root's `PROJECT_CONTEXT.md` and fails closed on a missing or unknown value. To probe it, feed it a payload on stdin as `scripts/test-hooks.sh` does; never create a real PR to see whether it fires. The exempt shapes are a diff that touches only `PROJECT_STATE.md` (grooming), a commit in `<base>..HEAD` with the trailer `Item: none` in file mode, or a line exactly `Item: none` in the PR body in issue mode (the first PR after the update, sync PRs), and a `B-<n>` moved into `### Done`.
+- **Known limit: merge from the PR's own checkout.** An MCP merge call carries only the PR number and the hook uses no network, so the merge line checks the branch of the checkout it runs in, not the PR's branch. A merge started from another branch's checkout is judged against that branch, and may be refused (or passed) for the wrong diff. In issue mode a merge always passes, because the PR body is not available locally.
+- **`hooks/backlog-brief.sh`** prints one line at every session start: `backlog: <u> untriaged, <p> in progress, top: B-<n> <title>` in file mode, `backlog: <u> untriaged, <o> open` in issue mode. It is advisory, and it is silent (not broken) in a repo without `.claude/template-manifest.json` (the hook is project-class), with no `PROJECT_STATE.md` backlog or no `Task source`, and in issue mode when `gh` is missing, fails or times out.
+- **The follow-ups note** (`hooks/agent-result-notes.sh`) fires on a reviewer or tester report with a `Follow-ups:` block followed at once by a `- ` line; a blank line between the two breaks the block.
+- **Counters.** `scripts/self-review-count.py` counts `backlog_item_none` (commit and PR texts that carry an `Item: none` line; a lower bound, since `-F`/`--body-file` texts are not visible), `backlog_refusals` (`<mode>/<reason>`: the mode is read from the code path that prints the refusal, `file` or `issue`, and is `other` where a text can come from either mode or before the mode is known) and `followups` (reviewer or tester results with a non-empty block). Counts only; no refusal, commit or report text is stored.
+
 ## For the release owner
 
 **Keep the toolkit checkout on the tagged commit for as long as any consumer may be syncing; never switch its branch during a consumer sync.** `template_compute_status` resolves against the checkout's HEAD, not against any tag, so a checkout moved to a docs branch mid-sync makes the manifest record an untagged commit as `lastSynced` even when every file hash still matches the tagged build (`sync-template`'s v3.0.4 pre-step catches this — stops in case 4, rewrites to the tag commit in case 2 — but the safer fix is not to create the condition; penumbra).
 
 If the checkout does drift onto a docs-only descendant of the tag, the skill's pre-step now recovers the correct label for the consumer by rewriting `lastSynced` to the tag commit when the tracked tree is unchanged — **do not rely on that as a substitute for keeping the checkout on the tag.** It only recovers a tree-identical drift; a checkout that has moved onto a commit carrying real template changes past the tag has no such rescue, and stays on the honest-but-unlabeled path.
+
+**Run `bash scripts/plugin-smoke.sh` before each release; it is not in the gate.** Since v7.0.0 it has a row 11 for the slim core: a nested `claude -p --plugin-dir <checkout>` with `cct` alone and no optional plugin. The row reads every command registered in `hooks/hooks.json` first (at least five, none naming a script that moved to `cct-guards`, `cct-learning` or `cct-jev`, each script present), then runs one command in a scratch repo and fails if the session stream names a moved script. It makes real model calls, so it runs at release, not per commit.
+
+**After a live update, open a fresh session and run `/status`.** It must list no broken agent, skill, command or output-style file and no never-matching hook matcher (Claude Code 2.1.327); if it lists one, the update is not done.
 
 ## Troubleshooting
 

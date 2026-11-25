@@ -1,5 +1,89 @@
 # Changelog
 
+## v7.0.0 — 2026-11-25
+
+Major. The core `cct` plugin gets slim: the cost and context guards, the learning loop, the small helper skills, Jev and the language coders move into optional plugins of the `dagonet` marketplace, and a machine installs the ones it wants. Four finished plans land together:
+- **Slim core, part 2: the plugin split** (breaking renames, below). Design and plan: `docs/plans/2026-11-22-slim-core-plugin-split-design.md` and `docs/plans/2026-11-22-slim-core-plugin-split-plan.md`.
+- **Slim core, part 1: backlog discipline.** Every PR names a backlog item or says `Item: none`; `hooks/backlog-item-check.sh` refuses one that does neither, `hooks/backlog-brief.sh` shows backlog debt at session start, and reviewer and tester follow-ups prompt a backlog entry. Design and plan: `docs/plans/2026-11-22-backlog-discipline-design.md` and `docs/plans/2026-11-22-backlog-discipline-plan.md`.
+- **The cheap-first model ladder.** `user-level-reference/CLAUDE.md` replaces the Jev exception with a ladder (cheap tier first, a step up on failure), a step-up note is added when a pipeline helper fails, and the counter records which model each helper started on. Design and plan: `docs/plans/2026-11-22-model-ladder-design.md` and `docs/plans/2026-11-22-model-ladder-plan.md`.
+- **The first self-review report's items** (`docs/self-review/2026-11-20.md`; plan `docs/plans/2026-11-20-v6.3-self-review-items-plan.md`). Statuses are below.
+
+**Floor reviewed: unchanged at >=v5.0.0.** `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. The server source did not change (`server/src/template_sync/VERSION` and its tests only), and `templates/ownership.json` changed only in two description strings. The templates did change, but every change reaches a project as plain template-class text or JSON that a v5.0-v6.2 skill already applies: the `## Backlog` subsections and the `Item:` line in `PROJECT_STATE.md` and `AGENT_TEAM.md`, the renamed agent types, and `"onFailure": "block"` on the inline plugin-off guard (a wholesale apply and a three-way merge both deliver the key, pinned by a new assertion in `server/tests/test_template_sync_settings_hooks.py`). What an older skill body lacks is the new step-wise behaviour in `skills/sync-template/SKILL.md` (the `old-names.sh` warning, and `Item: none` in the sync commit and PR body): the old-names warning only informs, and a sync PR without `Item: none` is refused by the backlog check, the safe direction (see Downstream migration). Beyond that, `template_load_manifest` refuses a skill body older than the checkout's own marker (`load_skill_refusal` in `server/src/template_sync/v3.py`), and this release moves the marker to v7.0.0, so a checkout of this release is never synced by an older skill. The sync-template `SKILL.md` marker and `server/src/template_sync/VERSION` move to v7.0.0 because consistency checks 21c-2g and 44 require them to equal `VERSION`; the skill's own `Requires` floor stays at server >= 5.2.0, because the server did not change.
+
+### Self-review items (`docs/self-review/2026-11-20.md`)
+- **Shipped:**
+  - **1:** `deny-hang-shapes` lets a read-only `cd` chain inside the session's cwd through (a character whitelist; heredocs and quoted or expanded option words stay refused).
+  - **2:** the fail-closed handlers carry `"onFailure": "block"` (needs Claude Code 2.1.295 or later, see Downstream migration; check 83), in the plugin `hooks/hooks.json` and the template's inline guard.
+  - **4 (counter side):** the counter counts backlog refusals, `Item: none` and follow-ups, and maps the toolkit's refusal texts; the project-side change is the backlog discipline above.
+  - **5:** made optional through the plugin split (the user's rule: low use on our machines never justifies removing a part). The rarely used skills, commands and agents are installable plugins; nothing is deleted.
+  - **6:** counter fixes: slash-command starts count, a plain "no" is not a correction, plugin skills and agents count as `<plugin>:<name>`.
+  - **7:** the model ladder (above).
+  - **9:** a `/status` step after a live update, in `docs/verification.md`.
+- **Closed by measurement:** **3** (the "safety checks could not run" refusals stopped after 2026-11-06, with none since, so nothing is left to change) and **8** (the router already sets the Agent tool's own `effort` field, and effort is left to the agent files: the model is the one dial the ladder turns).
+- **Deferred:** **10** (path-scoped rules).
+- **Counter rename:** the counter's `spawns` rows are now `start_models` rows (same data, new name; `spawns` is kept in the counts file for one release), so the next report compares like with like.
+
+### Downstream migration
+- **The first PR after the update adds the backlog shape and carries `Item: none`.** `hooks/backlog-item-check.sh` refuses a PR that names no backlog item. In file mode (`Task source: plan-files`) a base whose `PROJECT_STATE.md` lacks `## Backlog` with `### Untriaged`, `### Ranked` and `### Done` has nowhere to move an item, so the first PR adds the three subsections. In issue mode (`Task source: github-issues`) create the `priority:1..3` labels; the hook does not check them, `backlog-brief` reads them. That first PR carries the commit trailer `Item: none` in the last trailer block (file mode) or a line exactly `Item: none` in the PR body (issue mode).
+- **Sync PRs carry `Item: none`.** The PR that lands a `/cct:sync-template` run changes template files, not a backlog item; put the commit trailer `Item: none` in the last trailer block (file mode) and a line exactly `Item: none` in the PR body (issue mode).
+- **Grooming PRs are exempt.** A PR whose diff touches only `PROJECT_STATE.md` passes without a trailer (file mode).
+- **`gh pr create` takes its body only from `--body-file <plain path>`, in both modes.** `--body`, `-b`, `--fill`, `--fill-first`, `--fill-verbose`, `--template`, `--editor`, `--web` and no body file at all are refused, and so is a body-file path holding a `$`, a backtick, a glob character or a leading `~` (so `"${TMPDIR:-/tmp}/body.md"` is refused). Write the body with the Write tool and pass its literal absolute path. The command must be one plain `gh pr create|merge ...` segment (one leading `cd <dir> &&` is allowed): a chain or a wrapper (`env`, `bash -c`) is refused.
+- **File mode: create and merge run from the PR's own checkout, on its branch, pushed.** A checkout on another branch or on a detached HEAD is refused ("run from the PR's own checkout"), and so is a HEAD that differs from `origin/<head>` ("push first"). An MCP merge and `gh pr merge <n>` are judged on the checkout's branch, not on the PR number, so a merge run from `main` or from a sibling worktree (which `gate-before-merge` accepts) is now refused: merge from the PR's own pushed checkout.
+- **File mode: the base must be named or known, and fetched.** The base is `--base` (MCP: the `base` argument), else `refs/remotes/origin/HEAD`; with neither the PR is refused, so pass `--base` or run `git remote set-head origin -a` once per clone. `origin/<base>` must exist locally (`git fetch origin <base>`); the check uses no network.
+- **`Task source` in `PROJECT_CONTEXT.md` must be exactly `plan-files` or `github-issues`.** Any other value, or none, refuses every PR creation and merge.
+- **`.claude/git-guard-off` now switches off this check too**, not only the git gates. Remove it after the one fix, as before.
+- **Re-copy the user-level `CLAUDE.md`.** `user-level-reference/CLAUDE.md` changed (the cheap-first model ladder replaces the Jev exception), and `verify-user-level-drift.sh` reports drift until the live `~/.claude/CLAUDE.md` matches. On Linux, `bash scripts/install-user-level-linux.sh` rewrites it with its platform section.
+- **`"onFailure": "block"` needs Claude Code 2.1.295 or later.** The fail-closed guards in the plugin `hooks/hooks.json` and the template's inline plugin-off guard in `.claude/settings.json` now carry it, so a guard that crashes, cannot start or times out refuses the call instead of letting it through (Code Mode included). Update Claude Code first; older versions were not measured with the key.
+- **A plain `claude plugin update cct` (or the marketplace remove-and-add that replaces it for a pinned install) does NOT install the new optional plugins, and `cct` no longer carries their parts.** The commit, learning, guard and Jev parts disappear from the machine until each plugin is installed by name. Read this before updating and install what you use, once per machine, then restart every session:
+  - `claude plugin install cct-guards@dagonet` (read-size-gate, bash-output-guard, agent-budget-warn, post-edit-build);
+  - `claude plugin install cct-learning@dagonet` (retro-ledger, retro-brief, `/cct-learning:retro-review`);
+  - `claude plugin install cct-helpers@dagonet` (`/cct-helpers:commit`, `/cct-helpers:contribute-upstream`, `cct-helpers:karpathy-guidelines`, `cct-helpers:mcp-usage`);
+  - `claude plugin install cct-jev@dagonet` (`/cct-jev:jev`, jev-route, jev-notice); only where Jev routing is wanted;
+  - `claude plugin install dotnet-tools@dagonet`, `python-tools@dagonet`, `rust-tools@dagonet` or `java-tools@dagonet`, for each language you use (the coder agent; `java-tools` is new and has no MCP server).
+  The user's choice for the server and the PC: `cct-guards`, `cct-learning` and `cct-helpers`; not `cct-jev`; a language plugin only where that language is used. On Linux the installer does it in one run: `bash scripts/install-user-level-linux.sh --with cct-guards,cct-learning,cct-helpers`.
+- **Machine's choice = its `enabledPlugins`.** `scripts/verify-user-level-drift.sh` now prints one `OPTIONAL PLUGINS` line and reports `OPTIONAL PLUGIN MISSING` only for a dagonet plugin that `settings.json` enables but that is not installed. Installed but not enabled, disabled, or absent is not drift. A plugin installed at another version is still drift when `settings.json` has it disabled (the sub-plugin check, unchanged), and any install record counts as installed, so a project-scope-only install reads as installed. After the update, 0 drift needs the plugins you enabled to be installed.
+- **Projects: `/cct:sync-template` warns about old names in files you keep.** The rename below breaks a project agent, a `PROJECT-CUSTOM` region or a README that still uses an old name. The sync's report step prints each hit with its new name and edits nothing.
+
+### Renamed: old name to new name (breaking)
+| Old | New |
+|---|---|
+| `cct:dotnet-coder` | `dotnet-tools:dotnet-coder` |
+| `cct:python-coder` | `python-tools:python-coder` |
+| `cct:rust-coder` | `rust-tools:rust-coder` |
+| `cct:java-coder` | `java-tools:java-coder` (a new plugin, no MCP server) |
+| `/cct:retro-review` | `/cct-learning:retro-review` |
+| `/cct:commit` | `/cct-helpers:commit` |
+| `/cct:contribute-upstream` | `/cct-helpers:contribute-upstream` |
+| `cct:karpathy-guidelines` | `cct-helpers:karpathy-guidelines` |
+| `cct:mcp-usage` | `cct-helpers:mcp-usage` |
+| `/cct:jev` | `/cct-jev:jev` (reinstall hint: `cct-jev@dagonet`) |
+
+The hooks keep their names; only where they come from changed: `read-size-gate`, `bash-output-guard`, `agent-budget-warn` and `post-edit-build` from `cct-guards`, `retro-ledger` and `retro-brief` from `cct-learning`, `jev-route` and `jev-notice` from `cct-jev`. `cct:coder` and the other five core agents are unchanged. A spawn that names an old type no longer resolves; point it at the new name (the plugin installed), or at `cct:coder`.
+
+### Added: optional plugins and their delivery (spec `docs/plans/2026-11-22-slim-core-plugin-split-design.md`, section 10)
+- **`--with <plugin,...>` on `scripts/install-user-level-linux.sh`.** Names are those in `.claude-plugin/marketplace.json` minus `cct`, with or without `@dagonet`; the flag may repeat or be written `--with=<list>`. The list is checked before anything is removed, so an unknown name, an empty list or an unknown argument exits non-zero with the machine unchanged. Each named plugin is installed after `cct` and the restored sub-plugins and ends up enabled, even if you had switched it off. No flag installs none.
+- **Drift reads `enabledPlugins`** (above). New rows pin both directions (enabled and missing, disabled and missing, installed and not enabled, none installed, another version, CRLF python3).
+- **`skills/sync-template/old-names.sh`** is the table of old names behind the sync warning. It prints `<file>:<line>: <old> -> <new>` for the project files a sync keeps, writes nothing and always exits 0. Check 76 exempts that one path (its job is to name old parts); every other file, `SKILL.md` included, stays scanned, and the check's controls pin both arms.
+- **`scripts/plugin-smoke.sh` row 11 (release only):** `claude -p --plugin-dir` with `cct` alone and no optional plugin; no registered command names a script that moved. It reads at least five registrations from `hooks/hooks.json` first, so an empty read cannot pass.
+
+### Docs
+- `docs/architecture.md`: the Context Budget table gains a `wc -c` column for v7.0.0. The variant `CLAUDE.md` files, the user-level `CLAUDE.md`, the `project-instructions.md` seed, every `PROJECT_CONTEXT.md` and `AGENT_TEAM.md` moved, and the core plugin now ships 3 skills and 6 agents (9 and 10 with every optional plugin). Every figure was re-measured, none carried forward.
+- `README.md`, `docs/getting-started.md` and `docs/plugin-migration-windows.md`: the install lines and the pinned tag move to v7.0.0.
+- `docs/self-review/2026-11-20.md`: items 3 and 8 are marked closed and item 5 shipped through the plugin split; a line notes that the counter's `spawns` rows are now `start_models` rows. Nothing else in the report is applied.
+
+### Fixed
+
+- **Bootstrap and Linux installer: an installed plugin could read as missing.** Both scripts run under `pipefail` and piped `claude plugin list` (and `marketplace list`) into `grep -q`, which stops reading at the first match; when the CLI still had lines to write it died of SIGPIPE and the check failed. The bootstrap then printed the install tip instead of enabling `dotnet-tools` or `rust-tools` for the clone, and the installer re-added the marketplace. Both now capture the list first and match it in the shell. Seen once as a flaky bootstrap fixture on a loaded host; the fixture's `claude` stub now writes its list line by line with a pause, so the old shape fails reliably (it escaped only if `grep -q` took longer than the pause to exit).
+
+### Measured
+Taken from the full gate at 649be6d on agent-host-1 (`GATE PASS`), the last code commit (the fix in Fixed above), and repeated with the same counts at c21c639 (the Windows fixture fix below, test-only); the commits after them change only this CHANGELOG section. `bash scripts/test-server.sh` needed `bash server/install.sh` once in the checkout after the `VERSION` bump (`test_hatch_reads_the_same_version_file`). The bootstrap fixtures were also run directly at that commit, with the same result.
+- **`bash scripts/verify-template-consistency.sh`:** ALL CHECKS PASSED (check 50 prints as a PASS line while skipping: no system `python`, only `python3`).
+- **`bash scripts/test-hooks.sh`:** 7407 passed, 0 failed, 6 skipped (7413 assertions).
+- **`bash scripts/test-server.sh`:** 628 passed, 9 skipped.
+- **Bootstrap fixtures** (`scripts/test-setup-project.sh`, run inside the consistency script): 66 passed, 0 failed, 62 skipped (128 assertions).
+- **Parser matrix (`scripts/test-hooks-parser-matrix.sh`), at 7dc124c on agent-host-1 (about 60 min):** 0 failed in all three configurations: node 7407/0/6, python3-only 7091/0/293, jq-only 6982/0/401. The restricted skip counts rose from the v6.2.0 tree's 276 and 378 by rows this release added: 17 that need node (read-size-gate 2, bash-output-guard 2, retro 6, the agent type table in the contract hook 7) and, for jq, 6 more that need python3 (the drift script's optional-plugin CRLF arm 2, the Jev registration fixtures 4). That run failed the band check for jq (401 against 368 +/-20), so `EXP_PY_SKIP` and `EXP_JQ_SKIP` are set to the measured 293 and 401. Re-run at 506457f (about 64 min): PARSER MATRIX PASSED, the same three counts. The later fix (Fixed above) touches no hook and no parser path.
+- **Windows (the PC, Git Bash):** at 280f0d5, the consistency script ALL CHECKS PASSED and the bootstrap fixtures 163 passed, 0 failed, 5 skipped (the PowerShell rows ran). The full `bash scripts/test-hooks.sh` (about 2 h 55 min): 7234 passed, 7 failed, 171 skipped (7412 assertions). All 7 failures were backlog-brief fixtures that run the hook on a private PATH. Their tool directories were filled with `ln -sf`, which copies the exe on Git Bash, and an MSYS exe outside `/usr/bin` cannot load `msys-2.0.dll`, so `grep`, `sed` and `awk` never started and the hook exited silently (its "silent" rows passed for the same wrong reason). c21c639 makes each tool there a wrapper that execs the real one by absolute path, the shape the suite already used for `rm`. The backlog-brief section re-run on the PC at c21c639: 39 passed, 0 failed, 0 skipped. The Windows total is one assertion short of Linux's 7413, so one skip count differs on Git Bash; that is not yet traced.
+
 ## v6.2.0 — 2026-11-12
 
 Minor. A project can keep its own hook handlers in the template-owned `.claude/settings.json` and still sync clean; the same review closed one older loophole in how PROJECT-CUSTOM regions are checked; the Windows drift probe stops reporting false drift. Design and plan: `docs/plans/2026-11-11-project-hooks-in-settings-design.md` and `docs/plans/2026-11-11-project-hooks-in-settings-plan.md`.

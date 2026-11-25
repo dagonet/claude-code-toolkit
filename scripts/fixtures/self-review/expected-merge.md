@@ -6,9 +6,14 @@ windows differ: linux-aaaaaa 2026-11-01..2026-11-30; windows-bbbbbb 2026-11-08..
 | --- | ---: | ---: | ---: |
 | agent Explore | 0 | 2 | 2 |
 | agent coder | 3 | 1 | 4 |
+| backlog_item_none | 3 | 1 | 4 |
+| backlog_refusals file/no-item | 2 | 1 | 3 |
+| backlog_refusals file/not-pushed | 1 | 0 | 1 |
+| backlog_refusals issue/no-item | 0 | 2 | 2 |
 | correction_candidates | 6 | 4 | 10 |
 | correction_kind ignored-instruction | 0 | 3 | 3 |
 | correction_kind scope-creep | 0 | 1 | 1 |
+| followups | 2 | 0 | 2 |
 | hook_blocks deny-hang-shapes | 0 | 2 | 2 |
 | hook_blocks gate-before-merge | 4 | 1 | 5 |
 | hook_blocks other | 1 | 3 | 4 |
@@ -28,11 +33,15 @@ windows differ: linux-aaaaaa 2026-11-01..2026-11-30; windows-bbbbbb 2026-11-08..
 | notes_malformed | 1 | 2 | 3 |
 | skill commit | 5 | 2 | 7 |
 | skill sprint | 0 | 1 | 1 |
-| spawns Explore claude-haiku-5-5 | 4 | 2 | 6 |
-| spawns cct:coder claude-opus-5-5 | 3 | 1 | 4 |
-| spawns cct:coder claude-sonnet-5-5 | 2 | 0 | 2 |
-| spawns other claude-sonnet-5-5 | 0 | 2 | 2 |
-| spawns unknown claude-sonnet-5-5 | 1 | 0 | 1 |
+| start_models Explore claude-haiku-5-5 | 4 | 2 | 6 |
+| start_models cct:coder claude-opus-5-5 | 3 | 1 | 4 |
+| start_models cct:coder claude-sonnet-5-5 | 2 | 0 | 2 |
+| start_models other claude-sonnet-5-5 | 0 | 2 | 2 |
+| start_models unknown claude-sonnet-5-5 | 1 | 0 | 1 |
+| step_ups cct:coder fable->user | 0 | 1 | 1 |
+| step_ups cct:coder opus->fable | 1 | 0 | 1 |
+| step_ups cct:coder sonnet->opus | 2 | 1 | 3 |
+| step_ups other haiku->sonnet | 0 | 2 | 2 |
 | sub_share | 0.3571 | 0.1373 | 0.3286 |
 | tokens claude-haiku-5-5 cache_read | 0 | 1000 | 1000 |
 | tokens claude-haiku-5-5 input | 0 | 100 | 100 |

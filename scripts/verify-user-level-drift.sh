@@ -11,6 +11,12 @@
 #       settings.json has enabledPlugins["cct@dagonet"] == true;
 #   (c) no path from REF's scripts/lib/v4-user-leftovers.txt exists under ~/.claude;
 #   (d) REF's hooks/verify-hooks.sh --report finds no stale hook registration in the live HOME;
+#   (e) every dagonet plugin besides cct that settings.json ENABLES (enabledPlugins value true) is installed (the
+#       machine's own choice is its enabledPlugins; v7.0.0, spec section 10 item 3). The dagonet plugins installed
+#       besides cct are listed in one OPTIONAL PLUGINS line, information only: none installed is the public default,
+#       and one installed but not enabled is no drift. A plugin installed at another version is the (b2) sub-plugin drift,
+#       and stays drift even when settings.json has it disabled (an installed stale copy is still a stale copy). Limit:
+#       any install record counts as installed, so a plugin installed at project scope only reads as installed here;
 # and permissions.autoMode.environment in settings.json matches the reference (below).
 # A REF older than v5.0 (no leftovers list) is compared the pre-v5.0 way: CLAUDE.md plus every
 # hooks/, skills/, agents/ and output-styles/ file that REF shipped, byte for byte.
@@ -270,7 +276,9 @@ try {
   # line; one installed at a version other than VERSION is drift; one whose name is also a user-scope `claude mcp`
   # server in ~/.claude.json is registered twice. Same parser chain as above; prints "<id> <scope> <version>"
   # lines (installed_plugins.json) or "KEY <name>" lines (~/.claude.json mcpServers).
-  sub_query() { # subs|keys <file>
+  # A third mode, `enabled <settings.json>`, prints "ENABLED <id>" for every dagonet plugin besides cct whose
+  # enabledPlugins value is exactly true (not merely present).
+  sub_query() { # subs|keys|enabled <file>
     if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' 2>/dev/null; then
       python3 -c '
 import json, sys
@@ -281,6 +289,10 @@ try:
             if i.endswith("@dagonet") and i != "cct@dagonet":
                 for r in rs:
                     print("%s %s %s" % (i, r.get("scope"), r.get("version")))
+    elif sys.argv[1] == "enabled":
+        for i, v in d.get("enabledPlugins", {}).items():
+            if i.endswith("@dagonet") and i != "cct@dagonet" and v is True:
+                print("ENABLED " + i)
     else:
         for k in d.get("mcpServers", {}):
             print("KEY " + k)
@@ -294,11 +306,17 @@ try {
     Object.keys(d.plugins || {}).forEach(function (i) {
       if (/@dagonet$/.test(i) && i !== "cct@dagonet") d.plugins[i].forEach(function (r) { console.log(i + " " + r.scope + " " + r.version); });
     });
+  } else if (process.argv[1] === "enabled") {
+    Object.keys(d.enabledPlugins || {}).forEach(function (i) {
+      if (/@dagonet$/.test(i) && i !== "cct@dagonet" && d.enabledPlugins[i] === true) console.log("ENABLED " + i);
+    });
   } else Object.keys(d.mcpServers || {}).forEach(function (k) { console.log("KEY " + k); });
 } catch (e) {}' "$1" "$2"
     elif command -v jq >/dev/null 2>&1; then
       if [ "$1" = subs ]; then
         jq -r '.plugins | to_entries[] | select((.key | endswith("@dagonet")) and .key != "cct@dagonet") | .key as $i | .value[] | "\($i) \(.scope) \(.version)"' "$2" 2>/dev/null
+      elif [ "$1" = enabled ]; then
+        jq -r '(.enabledPlugins // {}) | to_entries[] | select((.key | endswith("@dagonet")) and .key != "cct@dagonet" and .value == true) | "ENABLED " + .key' "$2" 2>/dev/null
       else
         jq -r '(.mcpServers // {}) | keys[] | "KEY " + .' "$2" 2>/dev/null
       fi
@@ -320,6 +338,30 @@ try {
       fi
     done <<EOF
 $sub_recs
+EOF
+    # (e) the machine's own choice is its enabledPlugins: a dagonet plugin besides cct that settings.json enables
+    # but that has no install record is drift. One installed at another version is (b2)'s line, not a second one.
+    # The OPTIONAL PLUGINS line is information; it starts at column 0 and with its own prefix.
+    en_recs=""
+    [ -f "$LIVE_SETTINGS" ] && en_recs=$(sub_query enabled "$LIVE_SETTINGS" | tr -d '\r')
+    opt_list=""
+    while read -r sp_id sp_scope sp_ver; do
+      [ -n "$sp_id" ] || continue
+      if printf '%s\n' "$en_recs" | grep -qxF "ENABLED $sp_id"; then sp_st=enabled; else sp_st="not enabled"; fi
+      opt_list="$opt_list${opt_list:+, }$sp_id $sp_ver ($sp_st)"
+    done <<EOF
+$sub_recs
+EOF
+    echo "OPTIONAL PLUGINS (the dagonet plugins besides cct; information): ${opt_list:-none installed}"
+    while read -r en_tag en_id; do
+      [ "$en_tag" = ENABLED ] || continue
+      if ! printf '%s\n' "$sub_recs" | awk -v i="$en_id" '$1 == i { f = 1 } END { exit !f }'; then
+        drift=$((drift + 1))
+        drift_list="$drift_list
+  OPTIONAL PLUGIN MISSING: $en_id is enabled in $LIVE_SETTINGS but not installed (install it: claude plugin install $en_id; or set it to false there)"
+      fi
+    done <<EOF
+$en_recs
 EOF
   fi
 
