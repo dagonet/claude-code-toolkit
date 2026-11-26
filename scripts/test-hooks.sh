@@ -8722,6 +8722,7 @@ b1c "ref: find . \"\$_\""                   2 "cd /w/proj && ls && ls -d -- -del
 b1c "ref: find . \"\$x\""                   2 "cd /w/proj && ls && find . \"\$x\""
 b1c "ref: find -dele[t]e (glob)"           2 "cd /w/proj && ls && find . -dele[t]e"
 b1c "ref: find -delet? (glob)"             2 "cd /w/proj && ls && find . -delet?"
+b1c "ref: SEDN rewrite inside a quoted string" 2 "cd /w/proj && ls && grep 'a sed -n '\$p' b' f"
 b1c "ref: double-quoted pattern"           2 "cd /w/proj && ls && grep \"x\" f"
 b1c "ref: bare \$VAR"                      2 "cd /w/proj && ls && cat \$f"
 b1c "ref: bare * glob"                     2 "cd /w/proj && ls && cat *.md"
