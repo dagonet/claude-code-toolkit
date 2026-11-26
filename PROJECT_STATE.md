@@ -20,6 +20,7 @@ v7.0.0 is released (PR #221) and live on agent-host-1 and the PC (drift 0). The 
 - B-15 Backlog check refuses a PR title holding an arrow (`v6.2.0 -> v7.0.0`: the arrow is read as a flag-shaped word); hit by open-brain in the v7.0.0 sync. Let `->` through in a quoted title, or have the sync skill's title and examples say "to"
 - B-16 sync-template SKILL.md: no advice when PR creation fails with a GitHub 5xx after the push (retry later; the branch is pushed, nothing to undo)
 - B-17 Gate artifact: the 24 h window expired during a ~1-day GitHub outage (open-brain); decide whether that needs more than a re-run
+- B-18 Once-class wording never reaches existing projects: a sync shows a changed `PROJECT_CONTEXT.md` line only as a `once_notes_changed` INFO (panoscribe). All 6 consumers still point their Ollama line at `CLAUDE.local.md`, no longer shipped (measured 2026-11-26). Have the sync present each pending once-note hunk as an adopt/skip choice; the consumers fix the line
 
 ### Ranked
 
