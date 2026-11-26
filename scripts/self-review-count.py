@@ -1133,7 +1133,7 @@ def self_test():
             ("the body of this gh pr create cannot be read from the command (--body, -b)", 'other/body-unreadable'),
             ("the body file '/x' holds a $, a backtick, a glob character or a leading ~, so this check cannot tell which file it is: use a plain path.",
              'other/body-unreadable'),
-            ('title holds a flag-shaped word (a word that starts with -): reword the title.', 'other/other'),
+            ('title holds a flag-shaped word (a word that starts with -): reword the title (write "to" instead of "->").', 'other/other'),
             ('--base has no value: pass --base <branch>.', 'other/other'),
             ('the hook payload did not parse, or no JSON parser (node, python3 or jq) is on PATH', 'other/other'),
             ('hooks/lib/git-cmd.sh missing -- run /cct:sync-template step 6b', 'other/other'),
