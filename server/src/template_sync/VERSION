@@ -1,2 +1,2 @@
-7.0.0
-v7.0.0: slim core with optional plugins, cheap-first model ladder, backlog discipline (Item trailer), counter and guard fixes
+7.0.1
+v7.0.1: sync-template fixes, clearer PR-title refusal, deny-hang-shapes quoting leftovers

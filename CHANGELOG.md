@@ -1,5 +1,33 @@
 # Changelog
 
+## v7.0.1 — 2026-11-27
+
+Patch. A leftover quoting hole in `deny-hang-shapes`, a clearer refusal in `backlog-item-check`, and fixes to the `sync-template` skill text. Backlog items: B-6, B-15, B-16, B-11.
+
+**Floor reviewed: unchanged at >=v5.0.0.** `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. No file under `templates/` and no server source changed, so a consumer needs no template sync for this release. The sync-template `SKILL.md` marker moves to v7.0.1 only because consistency check 21c-2g requires it to equal `VERSION`.
+
+### Fixed
+- **`deny-hang-shapes`: a `sed -n` range rewrite inside a quoted string.** Inside the read-only `cd` chain, `grep 'a sed -n '$p' b' f` left `$p` unquoted and got through; it is now refused, and so is a literal `SEDN` word. Side effect, in the strict direction: a quoted argument that holds the text `sed -n 5p` is refused in a `cd` chain too.
+
+### Changed
+- **`backlog-item-check`: the refusal for a PR title word that starts with `-` names the common case.** It now says to write "to" instead of "->". The check itself is unchanged; an arrow in a title was and is refused.
+
+### Docs
+- **`skills/sync-template/SKILL.md`:**
+  - The PR title for a sync reads `vX to vY`.
+  - When PR creation fails with a GitHub 5xx after the push: retry later, the branch is pushed; look for an already-created PR first.
+  - The `Gates:` sample lines carry no hook count (it depends on the installed plugins). The node-only hooks are listed by plugin (measured): `enforce-delegation` and `enforce-agent-contract` in `cct`; `read-size-gate` and `bash-output-guard` in `cct-guards`; `retro-brief` and `retro-ledger` in `cct-learning`.
+  - The old-names paragraph lists every scanned kind.
+- `docs/architecture.md`: the Context Budget table gains a `wc -c` column for v7.0.1.
+- `README.md`, `docs/getting-started.md` and `docs/plugin-migration-windows.md`: the install lines and the pinned tag move to v7.0.1.
+
+### Downstream migration
+1. `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#v7.0.1`, then `claude plugin update cct@dagonet` (and each optional plugin you use). Update your toolkit checkout to the same tag, and restart every session.
+2. No `/cct:sync-template` is needed.
+
+### Measured
+Measured: <filled by the release owner from the gate>
+
 ## v7.0.0 — 2026-11-25
 
 Major. The core `cct` plugin gets slim: the cost and context guards, the learning loop, the small helper skills, Jev and the language coders move into optional plugins of the `dagonet` marketplace, and a machine installs the ones it wants. Four finished plans land together:
