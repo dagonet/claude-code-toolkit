@@ -283,7 +283,7 @@ bic_create_args() {
   BIC_BASE=""; BIC_HEAD=""; BIC_BFILE=""
   # a quoted title with a word that starts with a dash, or an unquoted title that does: flag-shaped
   if printf '%s\n' "$1" | grep -qE "(^|[[:space:]])(--title|-t)[[:space:]=]+([\"'][^\"']*[[:space:]]-|[\"']?-)"; then
-    bic_refuse "the title holds a flag-shaped word (a word that starts with -): reword the title."
+    bic_refuse "the title holds a flag-shaped word (a word that starts with -): reword the title (write \"to\" instead of \"->\")."
   fi
   set -- "${BIC_ARGS[@]}"
   while [ $# -gt 0 ]; do

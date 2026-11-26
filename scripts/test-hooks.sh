@@ -13845,6 +13845,7 @@ check_msg "backlog-item-check: the body-form refusal names the text-in-another-c
 check_msg "backlog-item-check: --title \"a --base x\" holds a flag-shaped word: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "a --base x"')" "flag-shaped"
 check_msg "backlog-item-check: --title -F x (unquoted flag-shaped title): refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title -F')" "flag-shaped"
 check_msg "backlog-item-check: -t \"a -b\" holds a flag-shaped word: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main -t "a -b"')" "flag-shaped"
+check_msg "backlog-item-check: a title with an arrow (v6.2.0 -> v7.0.0): refused, and the text names the fix" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "chore: sync template v6.2.0 -> v7.0.0"')" 'write "to" instead of "->"'
 check_msg "backlog-item-check: --base given twice: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --base other')" "more than once"
 check_msg "backlog-item-check: --body-file given twice: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr create --base main --body-file $BIC_BF -F $BIC_BB")" "more than once"
 check_msg "backlog-item-check: --title given twice: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title a --title b')" "more than once"
