@@ -26,7 +26,14 @@ Patch. A leftover quoting hole in `deny-hang-shapes`, a clearer refusal in `back
 2. No `/cct:sync-template` is needed.
 
 ### Measured
-Measured: <filled by the release owner from the gate>
+Taken from the full gate at d4a1a21 on agent-host-1 (`GATE PASS`), the last code commit; the commit after it adds only this section and the self-review report.
+- **`bash scripts/verify-template-consistency.sh`:** ALL CHECKS PASSED (check 50 prints as a PASS line while skipping: no system `python`, only `python3`).
+- **`bash scripts/test-hooks.sh`:** 7413 passed, 0 failed, 6 skipped (7419 assertions). Against v7.0.0 (7407/0/6) the suite gained three rows, each run directly and through the dispatcher: the quoted `sed -n` rewrite, the literal `SEDN` word, and the arrow title's refusal text.
+- **`bash scripts/test-server.sh`:** 628 passed, 9 skipped.
+- **Bootstrap fixtures** (`scripts/test-setup-project.sh`, run inside the consistency script, with the server venv present): 66 passed, 0 failed, 62 skipped (128 assertions).
+- **Parser matrix (`scripts/test-hooks-parser-matrix.sh`), at d4a1a21 on agent-host-1 (about 77 min):** 0 failed in all three configurations: node 7413/0/6, python3-only 7097/0/293 (in band, ~293 +/-20), jq-only 6988/0/401 (in band, ~401 +/-20). The restricted skip counts equal v7.0.0's: the new rows need no particular parser.
+- **Windows:** not run at this commit; the two changed sections (deny-hang-shapes, backlog-item-check) are re-run on the PC before the merge.
+- **Self-review:** `docs/self-review/2026-11-26.md`, a short report for the six days since the first one, on one machine. Nothing in it is applied.
 
 ## v7.0.0 — 2026-11-25
 
