@@ -1339,6 +1339,8 @@ git fetch -p                                       # drops the phantom remote-tr
 
 **The PR title holds no word that starts with `-`.** Write `sync template vX to vY`, not `vX -> vY`: the backlog item check refuses the arrow as a flag-shaped word. Commit subjects may keep the arrow.
 
+**If the create fails with a GitHub server error (HTTP 5xx, "Something went wrong") after the push, retry later: the branch is pushed and nothing needs undoing.** Run `gh pr list --head <branch>` first, because a failed call can still have created the PR.
+
 **The first Bash call after the post-merge pull may be refused with `HOOK SCRIPT MISSING` while the settings hot-reload.** Retry it once.
 
 **The MCP merge tool is gated by the same hook `gh pr merge` is — on the session cwd's HEAD and the gate artifact, never on a parsed command segment.** `gate-before-merge.sh` fires from the harness's own registration of the merge call, not from scanning a git command string the way the Bash-routed gates do; it reads the SAME `<common git dir>/gate/last-pass.<sha>.json` artifact against the SAME cwd's HEAD regardless of which tool performed the merge. Preferring `gh` above is about its `--delete-branch` convenience and about refusals you can actually SEE (a `gh` refusal prints straight into the tool output you are already reading) — never about the MCP tool being an unprotected route around the gate. A stale or missing artifact refuses either way.
