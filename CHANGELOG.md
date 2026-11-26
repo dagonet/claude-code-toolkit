@@ -22,7 +22,7 @@ Patch. A leftover quoting hole in `deny-hang-shapes`, a clearer refusal in `back
 - `README.md`, `docs/getting-started.md` and `docs/plugin-migration-windows.md`: the install lines and the pinned tag move to v7.0.1.
 
 ### Downstream migration
-1. `claude plugin marketplace remove dagonet`, then `claude plugin marketplace add dagonet/claude-code-toolkit#v7.0.1`, then `claude plugin update cct@dagonet` (and each optional plugin you use). Update your toolkit checkout to the same tag, and restart every session.
+1. Note every `@dagonet` plugin in `claude plugin list`. `claude plugin marketplace remove dagonet` (this uninstalls `cct` and every other `@dagonet` plugin), then `claude plugin marketplace add dagonet/claude-code-toolkit#v7.0.1`, then `claude plugin install cct@dagonet` and each noted plugin by name. On Linux, `bash scripts/install-user-level-linux.sh --with <your plugins>` does it in one run. Update your toolkit checkout to the same tag, and restart every session.
 2. No `/cct:sync-template` is needed.
 
 ### Measured
