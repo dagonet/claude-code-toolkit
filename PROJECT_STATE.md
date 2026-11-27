@@ -2,7 +2,7 @@
 
 ## Now
 
-v7.0.0 is released (PR #221) and live on agent-host-1 and the PC (drift 0). v7.0.1 (B-6, B-15, B-16, B-11) is ready for release; v7.1.0 (B-18, B-7, B-12, B-10) follows. Ranking by the user, 2026-11-26.
+v7.0.0 is released (PR #221) and live on agent-host-1 and the PC (drift 0). v7.0.1 (B-6, B-15, B-16, B-11, B-19) is ready for release; v7.1.0 (B-18, B-7, B-12, B-10) follows. Ranking by the user, 2026-11-26.
 
 ## Backlog
 
@@ -27,6 +27,7 @@ _none_
 - B-15 Backlog check: the refusal for a PR title word starting with `-` says to write "to" instead of "->"; the sync title reads `vX to vY` (v7.0.1)
 - B-16 sync-template SKILL.md: advice for a GitHub 5xx on PR creation after the push (v7.0.1)
 - B-11 sync-template SKILL.md: sample `Gates:` lines without a hook count, node-only hooks listed by plugin, every scanned kind listed (v7.0.1)
+- B-19 Backlog check: the base-shape refusal says the `Item: none` trailer must sit in the last paragraph of the commit message (MM-Agent report, 2026-11-27) (v7.0.1)
 - B-17 Gate artifact 24 h window expired during a ~1-day GitHub outage: closed without a change (re-run the gate; a longer window would weaken the merge check)
 - B-5 Docs consistent with v7.0.0 (README, AGENTS.md, docs/, MCP plugin setup)
 - B-1 v7.0.0 release (PR #221)

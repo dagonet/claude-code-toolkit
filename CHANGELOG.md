@@ -2,7 +2,7 @@
 
 ## v7.0.1 — 2026-11-27
 
-Patch. A leftover quoting hole in `deny-hang-shapes`, a clearer refusal in `backlog-item-check`, and fixes to the `sync-template` skill text. Backlog items: B-6, B-15, B-16, B-11.
+Patch. A leftover quoting hole in `deny-hang-shapes`, two clearer refusals in `backlog-item-check`, and fixes to the `sync-template` skill text. Backlog items: B-6, B-15, B-16, B-11, B-19.
 
 **Floor reviewed: unchanged at >=v5.0.0.** `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. No file under `templates/` and no server source changed, so a consumer needs no template sync for this release. The sync-template `SKILL.md` marker moves to v7.0.1 only because consistency check 21c-2g requires it to equal `VERSION`.
 
@@ -11,6 +11,7 @@ Patch. A leftover quoting hole in `deny-hang-shapes`, a clearer refusal in `back
 
 ### Changed
 - **`backlog-item-check`: the refusal for a PR title word that starts with `-` names the common case.** It now says to write "to" instead of "->". The check itself is unchanged; an arrow in a title was and is refused.
+- **`backlog-item-check`: the refusal for a base without the three backlog subsections says where the trailer must sit.** It ends with "The trailer must sit in the last paragraph of the commit message.", as the no-item refusal already did. A project hit the same refusal twice because its `Item: none` line stood in a paragraph of its own above the trailer block (B-19).
 
 ### Docs
 - **`skills/sync-template/SKILL.md`:**

@@ -202,7 +202,7 @@ bic_file_ok() {
   fi
   printf '%s\n' "$trailers" | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//' | grep -qx 'none' && return 0
   if ! bic_has_shape "$BIC_BASE_REF"; then
-    BIC_MSG="$BIC_BASE_REF has no \`## Backlog\` with the subsections ### Untriaged, ### Ranked and ### Done in PROJECT_STATE.md: add the three headings in this PR and commit with trailer \`Item: none\`."
+    BIC_MSG="$BIC_BASE_REF has no \`## Backlog\` with the subsections ### Untriaged, ### Ranked and ### Done in PROJECT_STATE.md: add the three headings in this PR and commit with trailer \`Item: none\`. The trailer must sit in the last paragraph of the commit message."
     return 1
   fi
   # A move: open in the base (Untriaged or Ranked, and not already in the base's Done), in HEAD's Done, and no longer

@@ -13637,6 +13637,7 @@ BIC_R=$(bic_mk bic-bn "\`plan-files\`" bare originhead)
 bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
 check_msg "backlog-item-check: file mode, base without subsections and no trailer: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "three headings"
 check_msg "backlog-item-check: that refusal names the trailer" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" 'Item: none'
+check_msg "backlog-item-check: that refusal says where the trailer must sit" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" 'last paragraph of the commit message'
 check_msg "backlog-item-check: that refusal starts BLOCKED: backlog-item-check:" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" 'BLOCKED: backlog-item-check:'
 BIC_R=$(bic_mk bic-nm "\`plan-files\`" full originhead)
 bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
