@@ -27,13 +27,13 @@ Patch. A leftover quoting hole in `deny-hang-shapes`, two clearer refusals in `b
 2. No `/cct:sync-template` is needed.
 
 ### Measured
-Taken from the full gate at d4a1a21 on agent-host-1 (`GATE PASS`), the last code commit; the commit after it adds only this section and the self-review report.
+Taken from the full gate at e40ba4a on agent-host-1 (`GATE PASS`), the last code commit (the B-19 refusal text and its row); the commit after it changes only this section.
 - **`bash scripts/verify-template-consistency.sh`:** ALL CHECKS PASSED (check 50 prints as a PASS line while skipping: no system `python`, only `python3`).
-- **`bash scripts/test-hooks.sh`:** 7413 passed, 0 failed, 6 skipped (7419 assertions). Against v7.0.0 (7407/0/6) the suite gained three rows, each run directly and through the dispatcher: the quoted `sed -n` rewrite, the literal `SEDN` word, and the arrow title's refusal text.
+- **`bash scripts/test-hooks.sh`:** 7415 passed, 0 failed, 6 skipped (7421 assertions). Against v7.0.0 (7407/0/6) the suite gained four rows, each run directly and through the dispatcher: the quoted `sed -n` rewrite, the literal `SEDN` word, the arrow title's refusal text, and the base-shape refusal's last-paragraph sentence.
 - **`bash scripts/test-server.sh`:** 628 passed, 9 skipped.
 - **Bootstrap fixtures** (`scripts/test-setup-project.sh`, run inside the consistency script, with the server venv present): 66 passed, 0 failed, 62 skipped (128 assertions).
-- **Parser matrix (`scripts/test-hooks-parser-matrix.sh`), at d4a1a21 on agent-host-1 (about 77 min):** 0 failed in all three configurations: node 7413/0/6, python3-only 7097/0/293 (in band, ~293 +/-20), jq-only 6988/0/401 (in band, ~401 +/-20). The restricted skip counts equal v7.0.0's: the new rows need no particular parser.
-- **Windows:** not run at this commit; the two changed sections (deny-hang-shapes, backlog-item-check) are re-run on the PC before the merge.
+- **Parser matrix (`scripts/test-hooks-parser-matrix.sh`), at d4a1a21 on agent-host-1 (about 77 min):** 0 failed in all three configurations: node 7413/0/6, python3-only 7097/0/293 (in band, ~293 +/-20), jq-only 6988/0/401 (in band, ~401 +/-20). The restricted skip counts equal v7.0.0's: the new rows need no particular parser. The matrix was not repeated for e40ba4a, which adds one refusal sentence and one row to that tree (the row passed in the gate above).
+- **Windows (Git Bash on the PC, section re-runs, not the full suite):** at e60c3e5 the suite setup plus the deny-hang-shapes B1 section and the backlog-item-check section: 814 passed, 0 failed, 0 skipped, with all 68 `b1c` rows passing directly and through the dispatcher; `python scripts/self-review-count.py --self-test` passed. At e40ba4a the backlog-item-check section again: 440 passed, 0 failed, 0 skipped, equal to Linux.
 - **Self-review:** `docs/self-review/2026-11-26.md`, a short report for the six days since the first one, on one machine. Nothing in it is applied.
 
 ## v7.0.0 — 2026-11-25
