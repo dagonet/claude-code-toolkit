@@ -126,8 +126,9 @@ dh_safe_cd_chain() {
   local re_glue='Q[^[:space:]]|[^[:space:]]Q' re_follow='(^|[[:space:]])-[a-zA-Z0-9]*[fF]'
   while [ "${cwd%/}" != "$cwd" ]; do cwd=${cwd%/}; done
   [ -n "$cwd" ] || return 1
-  # A heredoc body is a newline; a quote directly before `-` may hide an option word.
-  case "$raw" in *$'\n'*|*'||'*|*"'-"*) return 1 ;; esac
+  # A heredoc body is a newline; a quote directly before `-` may hide an option word;
+  # a literal SEDN would pass below as if it were the rewritten `sed -n`.
+  case "$raw" in *$'\n'*|*'||'*|*"'-"*|*SEDN*) return 1 ;; esac
   [[ $raw =~ $re_cd ]] || return 1
   target=${BASH_REMATCH[1]} rest=${BASH_REMATCH[2]}
   case "$target/" in */../*) return 1 ;; esac
@@ -138,7 +139,13 @@ dh_safe_cd_chain() {
   # `sed -n '<range>p'` becomes the word SEDN; any other sed is then off the list.
   # A literal Q becomes q first (classification only), so the marker Q is unambiguous.
   rest=$(printf '%s' "$rest" | tr Q q | sed -E \
-    "s/(^|[;&|[:space:]])sed[[:space:]]+-n[[:space:]]+(${re_bare}p|${DH_Q}${re_rng}p${DH_Q})([[:space:];&|]|\$)/\\1SEDN \\5/g; s/${DH_Q}[^${DH_Q}]*${DH_Q}/Q/g")
+    "s/(^|[;&|[:space:]])sed[[:space:]]+-n[[:space:]]+(${re_bare}p|${DH_Q}${re_rng}p${DH_Q})([[:space:];&|]|\$)/\\1SEDN \\5/g")
+  # A SEDN inside a single-quoted string (an even-numbered field when split on the quote)
+  # means the rewrite ate quotes meant to pair differently: refuse. A quoted argument
+  # that merely holds the text `sed -n 5p` (grep 'a sed -n 5p b' f) is refused too --
+  # the strict direction, accepted.
+  printf '%s' "$rest" | awk -F"$DH_Q" '{ for (i = 2; i <= NF; i += 2) if ($i ~ /SEDN/) exit 1 }' || return 1
+  rest=$(printf '%s' "$rest" | sed -E "s/${DH_Q}[^${DH_Q}]*${DH_Q}/Q/g")
   [[ $rest =~ $re_ok ]] || return 1
   rest=${rest//&&/;}
   case "$rest" in *'&'*) return 1 ;; esac

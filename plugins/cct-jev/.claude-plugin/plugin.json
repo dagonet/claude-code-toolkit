@@ -1,6 +1,6 @@
 {
   "name": "cct-jev",
-  "version": "7.0.0",
+  "version": "7.0.1",
   "description": "Optional: Jev spawn routing for claude-code-toolkit (the /cct-jev:jev switch, the jev-route and jev-notice hooks); sends spawn text to an outside service and needs a TypeSafe API key",
   "author": { "name": "dagonet" },
   "repository": "https://github.com/dagonet/claude-code-toolkit",

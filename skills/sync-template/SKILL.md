@@ -4,7 +4,7 @@ description: Pull template updates into the current project. Triggers on /cct:sy
 disable-model-invocation: true
 ---
 
-<!-- SYNC-TEMPLATE-SKILL-VERSION: v7.0.0 -->
+<!-- SYNC-TEMPLATE-SKILL-VERSION: v7.0.1 -->
 
 **This skill takes no arguments.** Invoke it as `/cct:sync-template` with nothing after it; any argument is substituted into the shell snippets below and corrupts them.
 
@@ -1167,7 +1167,7 @@ Version labels are server-authoritative under v3 (`template_version` / `template
 
 **Report a missing pre-push hook (v4.3.2).** Run `grep -qE 'claude-code-toolkit pre-push shim|hooks/git-pre-push\.sh' "$(git rev-parse --path-format=absolute --git-path hooks/pre-push)"`. If it fails, report `pre-push hook missing` and the one install command `bash hooks/git-pre-push.sh --install`. Never install it from the sync -- only a new project gets it at setup.
 
-**Warn on pre-v7 part names in kept files (v7.0.0).** Run `bash "${CLAUDE_SKILL_DIR}/old-names.sh" <project>` after every write is done: template-class files carry the new names by then, so each hit is a file the project keeps (its own agents, `.claude/project-instructions.md`, a `PROJECT-CUSTOM` region, README.md, CLAUDE.local.md). It prints one `<file>:<line>: <old> -> <new> (if <plugin> is installed; ...)` line per hit, prints nothing when there is none, writes nothing and always exits 0. **It only warns: edit none of those files.** Put each line in the report's `Warnings:` entry, and say that the new name needs its optional plugin installed on every machine that has this project (a plain `claude plugin update cct` does not install it). The CHANGELOG's v7.0.0 section holds the whole old-to-new map.
+**Warn on pre-v7 part names in kept files (v7.0.0).** Run `bash "${CLAUDE_SKILL_DIR}/old-names.sh" <project>` after every write is done: template-class files carry the new names by then, so each hit is a file the project keeps. The script scans `.claude/agents/*.md`, `.claude/rules/*.md`, `.claude/project-instructions.md`, `.claude/settings*.json` (a `Skill(...)` permission can name an old skill), `CLAUDE.md` (so a `PROJECT-CUSTOM` region), `CLAUDE.local.md`, `AGENT_TEAM.md`, `PROJECT_CONTEXT.md`, `PROJECT_STATE.md`, `README.md`, and every file under `.claude/skills` and `.claude/commands`. It prints one `<file>:<line>: <old> -> <new> (if <plugin> is installed; ...)` line per hit, prints nothing when there is none, writes nothing and always exits 0. **It only warns: edit none of those files.** Put each line in the report's `Warnings:` entry, and say that the new name needs its optional plugin installed on every machine that has this project (a plain `claude plugin update cct` does not install it). The CHANGELOG's v7.0.0 section holds the whole old-to-new map.
 
 #### 8a. Expected lines, per mode AND per manifest situation (`LINES` is now 30 — v4.1.0 raised it from 24 to 30; v4.1.1 adds `project_md_seed_differs`, directly after `project_md_seed_current`; v4.5.2 adds `retired_rule_names`, directly after `once_notes_changed`; v5.0 removes the three `agent_grants_*` lines with the grants mechanism; `project_hooks` is added directly before `tree_clean`)
 
@@ -1222,11 +1222,11 @@ Then run `bash <templateRepo>/scripts/verify-user-level-drift.sh` and fold its r
 
 Re-run the step-3 **positive control** here as well (the same temp script, `bash <path>`) and fold its result in: the sync rewrote `hooks/` and `settings.json` since the first probe, so this is the run that tells you the *post-sync* enforcement layer is live. `exit=2` + `BLOCKED` → report `Gates: live (scripts behave correctly on a fed payload)`. `exit=0` → report `Gates: INERT` and the recovery note, not a clean sync. Keep the parenthetical: the probe feeds the payload itself, so `live` here means the scripts work, never that the harness fires them.
 
-**Name the parser AND its consequence on the `Gates:` line.** The hooks pick the first WORKING backend of node → python3 → jq, and six of them (`read-size-gate` and `bash-output-guard` if `cct-guards` is installed, `enforce-delegation`, `retro-ledger` and `retro-brief` if `cct-learning` is installed, `enforce-agent-contract`'s transcript scan) are embedded node programs that stay inactive without node specifically. "Live" alone hides that. Field-validated shape, use it verbatim:
+**Name the parser AND its consequence on the `Gates:` line.** The hooks pick the first WORKING backend of node → python3 → jq, and six of them are embedded node programs that stay inactive without node specifically: `enforce-delegation` and `enforce-agent-contract` in the core `cct` plugin, `read-size-gate` and `bash-output-guard` in `cct-guards`, `retro-brief` and `retro-ledger` in `cct-learning` (the last four only when their plugin is installed). "Live" alone hides that. The count of hooks depends on the installed plugins, so the line carries none; use this shape:
 
 ```
-Gates:        live (parser: node — all 12 hooks enforcing)
-Gates:        live (parser: python3 — 6 node-only hooks inactive)
+Gates:        live (parser: node — all hooks enforcing)
+Gates:        live (parser: python3 — node-only hooks inactive: <names of those installed>)
 ```
 
 **Probing the MERGE gate from inside a guarded session blocks itself — and that block IS the positive result.** A probe command that builds a payload containing the literal `git merge` is matched by the real PreToolUse hook on the echo that constructs it, not on any merge. That is the unanchored matcher doing its documented job (these gates are fail-CLOSED; false positives are the accepted price of not being fooled by `bash -c "…"` wrapper forms). So: do not treat a self-block as a broken probe, and do not synthesise a payload to "really" test it — a real command, really blocked, with real shas in the message is the better proof. Where a synthetic probe genuinely is needed, drive the script from **outside** the session, never inline in a command string.
@@ -1336,6 +1336,10 @@ git pull --ff-only                                 # allowed by BOTH hook versio
                                                    # concluding anything about the release
 git fetch -p                                       # drops the phantom remote-tracking ref
 ```
+
+**The PR title holds no word that starts with `-`.** Write `sync template vX to vY`, not `vX -> vY`: the backlog item check refuses the arrow as a flag-shaped word. Commit subjects may keep the arrow.
+
+**If the create fails with a GitHub server error (HTTP 5xx, "Something went wrong") after the push, retry later: the branch is pushed and nothing needs undoing.** Run `gh pr list --head <branch>` first, because a failed call can still have created the PR.
 
 **The first Bash call after the post-merge pull may be refused with `HOOK SCRIPT MISSING` while the settings hot-reload.** Retry it once.
 

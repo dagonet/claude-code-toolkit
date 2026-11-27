@@ -8722,6 +8722,8 @@ b1c "ref: find . \"\$_\""                   2 "cd /w/proj && ls && ls -d -- -del
 b1c "ref: find . \"\$x\""                   2 "cd /w/proj && ls && find . \"\$x\""
 b1c "ref: find -dele[t]e (glob)"           2 "cd /w/proj && ls && find . -dele[t]e"
 b1c "ref: find -delet? (glob)"             2 "cd /w/proj && ls && find . -delet?"
+b1c "ref: SEDN rewrite inside a quoted string" 2 "cd /w/proj && ls && grep 'a sed -n '\$p' b' f"
+b1c "ref: a literal SEDN command word"       2 "cd /w/proj && ls && SEDN f"
 b1c "ref: double-quoted pattern"           2 "cd /w/proj && ls && grep \"x\" f"
 b1c "ref: bare \$VAR"                      2 "cd /w/proj && ls && cat \$f"
 b1c "ref: bare * glob"                     2 "cd /w/proj && ls && cat *.md"
@@ -13635,6 +13637,7 @@ BIC_R=$(bic_mk bic-bn "\`plan-files\`" bare originhead)
 bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
 check_msg "backlog-item-check: file mode, base without subsections and no trailer: refused" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" "three headings"
 check_msg "backlog-item-check: that refusal names the trailer" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" 'Item: none'
+check_msg "backlog-item-check: that refusal says where the trailer must sit" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" 'last paragraph of the commit message'
 check_msg "backlog-item-check: that refusal starts BLOCKED: backlog-item-check:" "$BIC_HOOK" 2 "$(bic_create "$BIC_R" feat main -)" 'BLOCKED: backlog-item-check:'
 BIC_R=$(bic_mk bic-nm "\`plan-files\`" full originhead)
 bic_commit "$BIC_R" 'feat: work\n'; bic_push "$BIC_R"
@@ -13844,6 +13847,7 @@ check_msg "backlog-item-check: the body-form refusal names the text-in-another-c
 check_msg "backlog-item-check: --title \"a --base x\" holds a flag-shaped word: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "a --base x"')" "flag-shaped"
 check_msg "backlog-item-check: --title -F x (unquoted flag-shaped title): refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title -F')" "flag-shaped"
 check_msg "backlog-item-check: -t \"a -b\" holds a flag-shaped word: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main -t "a -b"')" "flag-shaped"
+check_msg "backlog-item-check: a title with an arrow (v6.2.0 -> v7.0.0): refused, and the text names the fix" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title "chore: sync template v6.2.0 -> v7.0.0"')" 'write "to" instead of "->"'
 check_msg "backlog-item-check: --base given twice: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --base other')" "more than once"
 check_msg "backlog-item-check: --body-file given twice: refused" "$BIC_HOOK" 2 "$(bic_sh "$BIC_MV" "gh pr create --base main --body-file $BIC_BF -F $BIC_BB")" "more than once"
 check_msg "backlog-item-check: --title given twice: refused" "$BIC_HOOK" 2 "$(bic_shb "$BIC_MV" 'gh pr create --base main --title a --title b')" "more than once"

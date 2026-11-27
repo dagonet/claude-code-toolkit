@@ -1,5 +1,41 @@
 # Changelog
 
+## v7.0.1 — 2026-11-27
+
+Patch. A leftover quoting hole in `deny-hang-shapes`, two clearer refusals in `backlog-item-check`, and fixes to the `sync-template` skill text. Backlog items: B-6, B-15, B-16, B-11, B-19.
+
+**Floor reviewed: unchanged at >=v5.0.0.** `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. No file under `templates/` and no server source changed, so a consumer needs no template sync for this release. The sync-template `SKILL.md` marker moves to v7.0.1 only because consistency check 21c-2g requires it to equal `VERSION`.
+
+### Fixed
+- **`deny-hang-shapes`: a `sed -n` range rewrite inside a quoted string.** Inside the read-only `cd` chain, `grep 'a sed -n '$p' b' f` left `$p` unquoted and got through; it is now refused, and so is a literal `SEDN` word. Side effect, in the strict direction: a quoted argument that holds the text `sed -n 5p` is refused in a `cd` chain too.
+
+### Changed
+- **`backlog-item-check`: the refusal for a PR title word that starts with `-` names the common case.** It now says to write "to" instead of "->". The check itself is unchanged; an arrow in a title was and is refused.
+- **`backlog-item-check`: the refusal for a base without the three backlog subsections says where the trailer must sit.** It ends with "The trailer must sit in the last paragraph of the commit message.", as the no-item refusal already did. A project hit the same refusal twice because its `Item: none` line stood in a paragraph of its own above the trailer block (B-19).
+
+### Docs
+- **`skills/sync-template/SKILL.md`:**
+  - The PR title for a sync reads `vX to vY`.
+  - When PR creation fails with a GitHub 5xx after the push: retry later, the branch is pushed; look for an already-created PR first.
+  - The `Gates:` sample lines carry no hook count (it depends on the installed plugins). The node-only hooks are listed by plugin (measured): `enforce-delegation` and `enforce-agent-contract` in `cct`; `read-size-gate` and `bash-output-guard` in `cct-guards`; `retro-brief` and `retro-ledger` in `cct-learning`.
+  - The old-names paragraph lists every scanned kind.
+- `docs/architecture.md`: the Context Budget table gains a `wc -c` column for v7.0.1.
+- `README.md`, `docs/getting-started.md` and `docs/plugin-migration-windows.md`: the install lines and the pinned tag move to v7.0.1.
+
+### Downstream migration
+1. Note every `@dagonet` plugin in `claude plugin list`. `claude plugin marketplace remove dagonet` (this uninstalls `cct` and every other `@dagonet` plugin), then `claude plugin marketplace add dagonet/claude-code-toolkit#v7.0.1`, then `claude plugin install cct@dagonet` and each noted plugin by name. On Linux, `bash scripts/install-user-level-linux.sh --with <your plugins>` does it in one run. Update your toolkit checkout to the same tag, and restart every session.
+2. No `/cct:sync-template` is needed.
+
+### Measured
+Taken from the full gate at e40ba4a on agent-host-1 (`GATE PASS`), the last code commit (the B-19 refusal text and its row); the commit after it changes only this section.
+- **`bash scripts/verify-template-consistency.sh`:** ALL CHECKS PASSED (check 50 prints as a PASS line while skipping: no system `python`, only `python3`).
+- **`bash scripts/test-hooks.sh`:** 7415 passed, 0 failed, 6 skipped (7421 assertions). Against v7.0.0 (7407/0/6) the suite gained four rows, each run directly and through the dispatcher: the quoted `sed -n` rewrite, the literal `SEDN` word, the arrow title's refusal text, and the base-shape refusal's last-paragraph sentence.
+- **`bash scripts/test-server.sh`:** 628 passed, 9 skipped.
+- **Bootstrap fixtures** (`scripts/test-setup-project.sh`, run inside the consistency script, with the server venv present): 66 passed, 0 failed, 62 skipped (128 assertions).
+- **Parser matrix (`scripts/test-hooks-parser-matrix.sh`), at d4a1a21 on agent-host-1 (about 77 min):** 0 failed in all three configurations: node 7413/0/6, python3-only 7097/0/293 (in band, ~293 +/-20), jq-only 6988/0/401 (in band, ~401 +/-20). The restricted skip counts equal v7.0.0's: the new rows need no particular parser. The matrix was not repeated for e40ba4a, which adds one refusal sentence and one row to that tree (the row passed in the gate above).
+- **Windows (Git Bash on the PC, section re-runs, not the full suite):** at e60c3e5 the suite setup plus the deny-hang-shapes B1 section and the backlog-item-check section: 814 passed, 0 failed, 0 skipped, with all 68 `b1c` rows passing directly and through the dispatcher; `python scripts/self-review-count.py --self-test` passed. At e40ba4a the backlog-item-check section again: 440 passed, 0 failed, 0 skipped, equal to Linux.
+- **Self-review:** `docs/self-review/2026-11-26.md`, a short report for the six days since the first one, on one machine. Nothing in it is applied.
+
 ## v7.0.0 — 2026-11-25
 
 Major. The core `cct` plugin gets slim: the cost and context guards, the learning loop, the small helper skills, Jev and the language coders move into optional plugins of the `dagonet` marketplace, and a machine installs the ones it wants. Four finished plans land together:
