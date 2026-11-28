@@ -1,5 +1,43 @@
 # Changelog
 
+## v7.1.0 — 2026-11-28
+
+Minor. A sync now offers the `PROJECT_CONTEXT.md` lines the template changed and the project still holds in their old form, and three cleanup items land with it. Backlog items: B-18, B-7, B-12, B-10. Design and plan: `docs/plans/2026-11-28-once-line-offers-design.md` and `docs/plans/2026-11-28-v7.1.0-plan.md`.
+
+**Floor reviewed: unchanged at >=v5.0.0.** `requires_skill` in `templates/ownership.json` stays `>=v5.0.0`. No file under `templates/` changed, so a consumer needs no template sync for this release. The server gained one status field pair, one manifest key and one capability (below); an older skill body ignores them, and the v7.1.0 skill runs its new step only when the server lists the capability, so neither floor moves. The sync-template `SKILL.md` marker and `server/src/template_sync/VERSION` move to v7.1.0 because consistency checks 21c-2g and 44 require them to equal `VERSION`.
+
+### Added
+- **Line offers for once-class files (B-18).** A project's `PROJECT_CONTEXT.md` is never overwritten by a sync, so a line the template changed stayed in its old form for good: v4.0.1 changed the `**Ollama**` line and six projects still held the old one in November 2026. The existing note mechanism could not see it (`notes_hunks` drops `**Key**:` lines, and the key audit records a changed default for required keys only).
+  - **Server:** for a once-class file with `"audit": "keys"`, `template_compute_status` reports `key_audit.line_offers`, a list of `{"old", "new"}` line pairs, and `key_audit.line_offer_bases`, the refs they were measured from. Pairing is strict: in a template diff hunk, a removed and an added `**Key**:` line with the same key name, or a hunk of exactly one removed and one added line of which neither is a key line. A pair is an offer only when the old line is not blank, the new line holds no `{{...}}` token, the old line stands in the project's file as a whole line exactly once, and its text occurs nowhere else in that file. Customized lines are never offered.
+  - **Manifest:** `template_finalize_sync` writes `pending_once_lines` (`[{"file", "from_commit"}]`), one entry per base that still yields an offer (a file can appear more than once), and returns it. The status measures offers from every such base and from the manifest's own. A skipped line is therefore offered again at the next sync, also beside newer changes; an adopted or hand-edited line drops out. The key is absent when nothing is open.
+  - **Skill:** new step 2d in `skills/sync-template/SKILL.md`. It shows the pairs, asks once which to adopt, and replaces exactly the adopted lines. This is the only edit a sync makes to a once-class file the project already holds, and only on the user's answer. The step runs when the server lists the new capability `line_offers`, and the "Already in sync" shortcut waits for it.
+  - Limits: the feature sees template changes from the first sync run with a v7.1.0 server on; it cannot find leftovers from earlier releases. Pure additions and deletions in the template are not offered (new keys and new comments are reported as before).
+
+### Fixed
+- **Self-review counter: a question no longer hides a later correction (B-7).** The `asked` flag was reset only by the next assistant text, so "question, `yes`, tool-only rows, `no, wrong file`" dropped a real correction. It is now reset after every typed user row that is not `isMeta`; a tool-result row keeps the exemption. The self-test gains two-sided rows for it and pinning rows for `MIN_PREFIX`, the `BLOCKED:` text position and `command_name`.
+- **Sync server: a damaged `pending_once_notes` value no longer fails the sync.** A manifest whose `pending_once_notes` was not a list (a hand edit) made `template_finalize_sync` raise. Such a value, and an entry of the wrong shape, now counts as absent; the new `pending_once_lines` is read the same way.
+- **`notes_hunks`: a changed template line that starts with `--` or `++` is no longer dropped from its hunk**, and template text is split on newlines only. Found while building the line offers, which share the hunk loop. The text and shape of the `once_notes_changed` line are unchanged.
+### Changed
+- **`user-level-reference/CLAUDE.md`, the model ladder (B-12):** the step-up sentence now ends "and say so in your report. At `fable`, stop and tell the user." Re-copy the file (Downstream migration).
+- **`plugins/cct-jev/skills/jev/SKILL.md`:** one clause says that Jev's `sonnet` floor for review and architect types is lower than the ladder's `opus` floor for reviews, and how to keep that floor.
+
+### Tests
+- **Consistency check 88 (B-10):** only real class-table lines (`<hook names>) cls=...; pol=... ;;`) are left out of the plugin-copy comparison; a `*)` arm that merely ends the same way is compared, with a control. The required-file list is de-duplicated.
+- **Consistency check 76 (B-10):** the vacuity guard covers every plugin that has skills, not only `cct-helpers`, with a control.
+
+### Docs
+- `docs/architecture.md`: the Context Budget table gains a `wc -c` column for v7.1.0 (the user-level `CLAUDE.md` grew by 24 bytes).
+- `README.md`, `docs/getting-started.md` and `docs/plugin-migration-windows.md`: the install lines and the pinned tag move to v7.1.0.
+
+### Downstream migration
+1. Note every `@dagonet` plugin in `claude plugin list`. `claude plugin marketplace remove dagonet` (this uninstalls `cct` and every other `@dagonet` plugin), then `claude plugin marketplace add dagonet/claude-code-toolkit#v7.1.0`, then `claude plugin install cct@dagonet` and each noted plugin by name. On Linux, `bash scripts/install-user-level-linux.sh --with <your plugins>` does it in one run. Update your toolkit checkout to the same tag.
+2. Re-copy the user-level `CLAUDE.md`: `user-level-reference/CLAUDE.md` changed, and `scripts/verify-user-level-drift.sh` reports drift until the live `~/.claude/CLAUDE.md` matches. The Linux installer rewrites it.
+3. Reinstall the sync server (`bash server/install.sh`, on Windows `server/install.ps1` with every session closed) and restart every session: the line offers need the v7.1.0 server.
+4. No `/cct:sync-template` is needed. The line offers show at a project's next sync that brings a changed `PROJECT_CONTEXT.md` line.
+
+### Measured
+MEASURED-PLACEHOLDER (the controller fills this section after the gate; leave this line as it is).
+
 ## v7.0.1 — 2026-11-27
 
 Patch. A leftover quoting hole in `deny-hang-shapes`, two clearer refusals in `backlog-item-check`, and fixes to the `sync-template` skill text. Backlog items: B-6, B-15, B-16, B-11, B-19.

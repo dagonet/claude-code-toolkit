@@ -1,6 +1,6 @@
 {
   "name": "cct-helpers",
-  "version": "7.0.1",
+  "version": "7.1.0",
   "description": "Optional: the small helper skills of claude-code-toolkit (commit, contribute-upstream, karpathy-guidelines, mcp-usage); no hooks",
   "author": { "name": "dagonet" },
   "repository": "https://github.com/dagonet/claude-code-toolkit",

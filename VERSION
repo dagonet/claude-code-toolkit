@@ -1,2 +1,2 @@
-7.0.1
-v7.0.1: sync-template fixes, clearer PR-title refusal, deny-hang-shapes quoting leftovers
+7.1.0
+v7.1.0: once-class line offers in the sync (adopt or skip a changed PROJECT_CONTEXT.md line), counter and consistency-check fixes
