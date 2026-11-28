@@ -280,7 +280,7 @@ Sync Status: {variant} @ {template_commit} (last synced: {last_synced_commit})
   Deleted:      {summary.template_deleted} warnings
 ```
 
-If everything is up-to-date and no new files, report "Already in sync" and finalize.
+If everything is up-to-date, there are no new files and no once-class file has a non-empty `key_audit.line_offers`, report "Already in sync" and finalize; otherwise run step 2d first.
 
 **`local_diff_kind` — key the context-mode remedy on `insertion`, and ONLY `insertion`; `mixed` is NOT a signal.** An appended context-mode routing block reports `LOCAL_EDITED` + `insertion`, and for that specific case the honest remedy is *"move these lines into the PROJECT-CUSTOM region"*. **Do not extend that remedy to `mixed`.** All four measured consumers report `mixed` for entirely ordinary reasons — a populated PROJECT-CUSTOM region replacing the shipped placeholder is a removal plus an addition, plus whatever drift already existed outside the region — so a message keyed on `mixed` fires on every one of them and blames the context-mode plugin in four places where the plugin is not involved. If you cannot tell which measured kind produced a given diff, ask before naming a cause. When the template side is unchanged (`LOCAL_EDITED` only because of an out-of-region insertion), move the lines into the PROJECT-CUSTOM region, then `template_apply_file(source="template", backup_dir=<dir>)` restores the template hash with `region_preserved`.
 
@@ -1175,7 +1175,7 @@ Version labels are server-authoritative under v3 (`template_version` / `template
 
 **Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file (the one exception is step 2d, a line the user adopted), so tell the user to read `template_get_diff` for that file and adopt the lines by hand. It also persists in the manifest (`pending_once_notes`) until the consumer adopts the note (every `**Key**:` its commented example introduced appears in their file) or the template drops that example; later finalizes carry still-unadopted notes forward, while a note that introduced no key is reported by its own sync only (an empty result removes the key). A comment-only once-note (it introduced no key) is informational: it clears on the next finalize whether or not you adopt it, so adopting it by hand is optional.
 
-**Report the line offers (step 2d, v7.1.0).** `Adopted lines:` lists each edited file and its new line. `Skipped lines (offered again at the next sync):` lists the finalize response's `pending_once_lines` (`file`, `from_commit`) plus any pair whose Edit failed.
+**Report the line offers (step 2d, v7.1.0).** `Adopted lines:` lists each edited file and its new line. `Skipped lines (offered again at the next sync):` lists the step 2d pairs the user did not adopt (file and old line); a pair whose Edit failed is listed once, as needing a hand edit.
 
 **Report a missing pre-push hook (v4.3.2).** Run `grep -qE 'claude-code-toolkit pre-push shim|hooks/git-pre-push\.sh' "$(git rev-parse --path-format=absolute --git-path hooks/pre-push)"`. If it fails, report `pre-push hook missing` and the one install command `bash hooks/git-pre-push.sh --install`. Never install it from the sync -- only a new project gets it at setup.
 
@@ -1289,7 +1289,7 @@ Before `git add`/`git commit`: run `git diff CLAUDE.md` and check for a re-appen
 
 Match the plugin's **heading**, not the phrase: `grep -c '^# context-mode' CLAUDE.md` must be `0`. The template's own text mentions "context-mode" by design (the sentinel section under `## context-mode plugin`), so a substring grep reports a false positive on a perfectly clean file; only a line *starting* `# context-mode` is the re-appended plugin block.
 
-Stage exactly the sync's touched files — the list is already in hand: every `applied_files` result from step 7, plus any files `git rm`'d in step 6. `git add -- <paths>`, then `git commit`. Never `git add -A`: it sweeps up untracked run artifacts (scratch scripts, a legacy pre-4.0.1 `.gate/` directory if one is still present, stray output files) that were never part of the sync. (Since v4.0.1 the gate artifact itself lives under `<common git dir>/gate/`, inside `.git`, so it is no longer a working-tree object `add -A` could sweep in at all — this caution now covers everything else.)
+Stage exactly the sync's touched files — the list is already in hand: every `applied_files` result from step 7, plus any files `git rm`'d in step 6, plus the once-class files edited in step 2d. `git add -- <paths>`, then `git commit`. Never `git add -A`: it sweeps up untracked run artifacts (scratch scripts, a legacy pre-4.0.1 `.gate/` directory if one is still present, stray output files) that were never part of the sync. (Since v4.0.1 the gate artifact itself lives under `<common git dir>/gate/`, inside `.git`, so it is no longer a working-tree object `add -A` could sweep in at all — this caution now covers everything else.)
 
 **Write the commit MESSAGE to a file and use `git commit -F <path>` — never a heredoc, and never a long `-m` (v2.2.5).** The gates scan the whole command STRING, so a message body that merely *describes* what this sync changed ("adopts the new merge gate", "gh pr merge is now blocked without a fresh artifact") is matched by `gate-before-merge.sh` on the commit that carries it. A sync commit describes gate changes by its nature, which makes this step the most likely place in the whole skill to hit it — and the block is uninterpretable, because it does not tell you whether the gate works or whether your own message was the violation. Same reasoning as the "probes must live in a script file" rule in step 3, arriving from a third direction. Write the message with the **Write tool** (not a Bash heredoc — the heredoc body is part of the command string too) to `"${TMPDIR:-/tmp}/sync-msg.txt"`, then `git commit -F` that path. The short `-m` this step used to prescribe dodged the gate by luck, not design.
 
@@ -1436,7 +1436,7 @@ For each new arm: delete the arm, re-run the suite, count the rows that flip. **
 ## Rules
 
 - NEVER auto-update a `CONFLICT` file without user confirmation
-- NEVER edit a once-class file, except the one-line edits of step 2d: one line per adopted pair, only on the user's answer
+- NEVER edit a once-class file the project already holds, except the one-line edits of step 2d: one line per adopted pair, only on the user's answer
 - NEVER delete a project-owned file the template never shipped. A `TEMPLATE_DELETED` file is different: ask, and delete it with `git rm` when the user accepts (step 6)
 - NEVER apply an `auto_merged` body without checking it for dropped lines — and, for a hook, without a `bash -n`
 - NEVER finalize without the hook-script verification (step 6b), sourced libs included — a missing script or lib fails open and silently disables enforcement

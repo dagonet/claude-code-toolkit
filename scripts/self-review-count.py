@@ -377,7 +377,7 @@ def scan(rows, since, until, refusals=(), step_ups=False):
     """
     out = {'first_day': None, 'first_model': None, 'versions': {}, 'usage': {}, 'calls': [],
            'commands': [], 'blocks': [], 'corrections': [], 'step_ups': [], 'backlog': [], 'followups': 0}
-    asked = False  # the latest assistant text, in or out of the window, ends in a question mark and no typed row has followed
+    asked = False  # the latest assistant text, in or out of the window, ends in a question mark and no typed, non-isMeta row has followed
     spawned = {}  # tool_use id -> subagent_type of each Agent call seen so far, in or out of the window
     for i, row in enumerate(rows):
         msg = row.get('message')
@@ -426,7 +426,7 @@ def scan(rows, since, until, refusals=(), step_ups=False):
             if command:
                 out['commands'].append(command)
             text = None if row.get('isMeta') or asked else correction_text(typed)
-            asked = asked and not typed  # only the row that directly answers the question is exempt
+            asked = asked and not (typed and not row.get('isMeta'))  # only the typed row that directly answers the question is exempt
             if text:
                 out['corrections'].append((row['timestamp'] if isinstance(row.get('timestamp'), str) else '', text))
         attached = row.get('attachment') if row.get('type') == 'attachment' else None
@@ -1059,7 +1059,13 @@ def self_test():
     for rows, want, what in (
             ([turn('assistant', 'Shall I edit a.py?', 0), turn('user', 'yes', 1), tool_row(2), tool_row(3),
               turn('user', 'no, wrong file', 4)], ['no, wrong file'], 'a correction after an answered question'),
-            ([turn('assistant', 'Shall I edit a.py?', 0), turn('user', 'no', 1)], [], 'the answer to a question')):
+            ([turn('assistant', 'Shall I edit a.py?', 0), turn('user', 'no', 1)], [], 'the answer to a question'),
+            ([turn('assistant', 'Shall I edit a.py?', 0),
+              {'type': 'user', 'timestamp': '2026-11-10T10:01:00Z',
+               'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't0', 'content': 'done'}]}},
+              turn('user', 'no', 2)], [], 'the answer after a tool-result-only user row'),
+            ([turn('assistant', 'Shall I edit a.py?', 0), dict(turn('user', 'Caveat: local command output', 1), isMeta=True),
+              turn('user', 'no', 2)], [], 'the answer after an isMeta row with text')):
         got = [text for _, text in scan(rows, '2026-11-01', '2026-11-30')['corrections']]
         if got != want:
             bad.append('/scan corrections (%s): want %s, got %s' % (what, want, got))
