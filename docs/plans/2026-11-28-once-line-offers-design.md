@@ -49,7 +49,7 @@ nowhere. The design therefore keys on the project's own file, not on the note me
 2. **Line pairs matched against the project's file** (picked). The server pairs old and new lines
    from the template's own diff, strictly, and offers a pair only when the old line stands exactly
    once in the project's file. The skill asks and makes the one-line replacement. Simple, exact,
-   and wrong pairings cannot occur by construction of the two pairing rules below.
+   and the two pairing rules below leave no room for a guessed pairing of key lines.
 3. **A server tool that performs the replacement.** Rejected for now (KISS):
    `PROJECT_CONTEXT.md` is on the main thread's write surface (`hooks/enforce-delegation.sh`), the
    server hands over both lines verbatim, and an exact one-line Edit needs no new tool.
@@ -69,7 +69,10 @@ single base per file). The offers are measured from every base in this order, an
 `from_commit` the manifest's `pending_once_lines` holds for the file, if it resolves, then the
 base `resolve_base` gives today (the manifest's `template_commit`). An offer whose old line an
 earlier base already offered is dropped. A base that does not resolve, or yields no offer, is
-left out of `line_offer_bases`. Both sides of each diff are `template_content()` renderings, as
+left out of `line_offer_bases`. The pending bases are measured even when the manifest's own
+base does not resolve, so a skipped line is not lost with it. A `pending_once_lines` value that
+is not a list, or an entry that is not `{"file": str, "from_commit": str}`, counts as absent: a
+hand-damaged manifest must not fail the status. Both sides of each diff are `template_content()` renderings, as
 for `notes_hunks`.
 
 Why more than one base: with one base per file, a line the user keeps skipping pins the base at
@@ -82,14 +85,23 @@ ruling is wrong: one loop and a list where a string stood.
 that has removed and added lines:
 
 1. a removed `**Key**:` line and an added `**Key**:` line with the same key name are a pair;
-2. a hunk of exactly one removed and one added line is a pair, whatever the lines are.
+2. a hunk of exactly one removed and one added line, neither of them a `**Key**:` line, is a
+   pair.
 
-Nothing else is paired. A hunk with only removed or only added lines yields nothing.
+Nothing else is paired. A hunk with only removed or only added lines yields nothing. Rule 2 was
+"whatever the lines are" in the first draft; the whole-branch review showed a removed prose line
+and an unrelated added key line at the same spot offered as a replacement, so a key line now
+pairs only by rule 1. Rule 1 cannot pair unrelated lines; rule 2 can still pair two prose lines
+that merely share a spot, which the user sees and can skip.
+
+Both template sides and the project's text are split on `\n` only, so the three agree on what a
+line is.
 
 **Offer.** A pair is an offer when all hold: old is not blank; old differs from new; new holds
 no `{{...}}` token; old stands in the project's file as a whole line exactly once (a trailing
 `\r` on the project's line is ignored for the comparison; the file's final newline does not
-count as an empty line).
+count as an empty line); and the old line's text occurs nowhere else in the project's file, not
+even inside a longer line, so the skill's exact replacement has one place to land.
 
 `line_offers` is added to the server's capability list.
 
