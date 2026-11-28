@@ -1825,3 +1825,23 @@ def test_retired_rule_names_ignores_template_class_files(v4_consumer):
     v4_consumer.write(template_paths[0], "Required Skills\n")
     line = template_verify_lines(v4_consumer)["retired_rule_names"]
     assert "no retired rule names" in line["measured"]
+
+
+def test_pending_note_with_a_vertical_tab_in_its_line_stays_open(tmp_path):
+    # the hunk loop splits on "\n" only; the reader of its hunks must do the
+    # same, or the part after a \v loses its "+" and the note's key is never seen
+    repo, proj, old_commit = _good_fixture(tmp_path)
+    tpl = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "PROJECT_CONTEXT.md")
+    tpl.write_text(CONTEXT_CONTENT + "note\x0b<!-- e.g. - **Timeout**: 540 -->\n", encoding="utf-8", newline="")
+    _recommit(repo, "template gains a commented key example")
+    first = _finalize(proj)["pending_once_notes"]
+    assert len(first) == 1
+    assert _finalize(proj)["pending_once_notes"] == first
+
+
+def test_pending_note_with_a_non_string_commit_is_dropped(tmp_path):
+    # on a fixture whose template carries a guidance key, so an entry that is
+    # kept would show: _pending_note_open answers "open" for a commit it cannot read
+    repo, proj, tpl, kept = _pending_with_optional_key_fixture(tmp_path)
+    _damage(proj, "pending_once_notes", [{"file": "PROJECT_CONTEXT.md", "from_commit": 7}])
+    assert _finalize(proj)["pending_once_notes"] == []

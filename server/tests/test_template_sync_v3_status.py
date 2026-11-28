@@ -508,3 +508,10 @@ def test_line_offers_never_offer_a_blank_old_line():
     assert v3.line_offers("x\n\ny\n", "x\nz\ny\n", "a\nb\n") == []        # the final newline is no blank line
     assert v3.line_offers("x\n\ny\n", "x\nz\ny\n", "a\n\nb\n") == []      # a real blank line, held once: still none
     assert v3.line_offers("x\n  \ny\n", "x\nz\ny\n", "a\n  \nb\n") == []
+
+
+def test_line_offers_drop_an_old_line_that_two_pairs_share():
+    # two hunks replace the same old text: adopting both would land the second
+    # replacement inside the first one's new line
+    assert v3.line_offers("foo\nm\nfoo\n", "foo bar\nm\nbaz\n", "intro\nfoo\nend\n") == []
+    assert v3.line_offers("- **A**: 1\nm\n- **A**: 1\n", "- **A**: 2\nm\n- **A**: 3\n", "- **A**: 1\n") == []

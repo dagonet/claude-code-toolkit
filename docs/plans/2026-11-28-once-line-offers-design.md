@@ -131,9 +131,12 @@ server lists the `line_offers` capability and a file has offers:
   whole-line match); if the old line is no longer there exactly once, skip it and say so;
 - the edited file goes into the sync commit;
 - the report gains `Adopted lines:` and `Skipped lines (offered again at the next sync):`, the
-  second taken from the finalize response's `pending_once_lines`.
+  second listing the pairs the user did not adopt (`pending_once_lines` holds bases, not lines).
 
-This is the only edit a sync makes to a once-class file, and only on the user's answer; the
+The "Already in sync" shortcut applies only when no file has an offer. An old line that two
+pairs share is offered by neither.
+
+This is the only edit a sync makes to a once-class file the project already holds, and only on the user's answer; the
 skill's "never edits a once-class file" sentences get that exception. Without the capability the
 step is skipped, so the skill's server floor does not move.
 

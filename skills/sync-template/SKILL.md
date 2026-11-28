@@ -280,7 +280,7 @@ Sync Status: {variant} @ {template_commit} (last synced: {last_synced_commit})
   Deleted:      {summary.template_deleted} warnings
 ```
 
-If everything is up-to-date, there are no new files and no once-class file has a non-empty `key_audit.line_offers`, report "Already in sync" and finalize; otherwise run step 2d first.
+If everything is up-to-date, there are no new files and no once-class file has a non-empty `key_audit.line_offers`, report "Already in sync" and finalize; otherwise continue with the steps below.
 
 **`local_diff_kind` — key the context-mode remedy on `insertion`, and ONLY `insertion`; `mixed` is NOT a signal.** An appended context-mode routing block reports `LOCAL_EDITED` + `insertion`, and for that specific case the honest remedy is *"move these lines into the PROJECT-CUSTOM region"*. **Do not extend that remedy to `mixed`.** All four measured consumers report `mixed` for entirely ordinary reasons — a populated PROJECT-CUSTOM region replacing the shipped placeholder is a removal plus an addition, plus whatever drift already existed outside the region — so a message keyed on `mixed` fires on every one of them and blames the context-mode plugin in four places where the plugin is not involved. If you cannot tell which measured kind produced a given diff, ask before naming a cause. When the template side is unchanged (`LOCAL_EDITED` only because of an out-of-region insertion), move the lines into the PROJECT-CUSTOM region, then `template_apply_file(source="template", backup_dir=<dir>)` restores the template hash with `region_preserved`.
 
@@ -444,7 +444,7 @@ For each once-class file whose `key_audit.line_offers` is non-empty, show every 
 
 For each adopted pair, replace exactly that one line with the Edit tool: `old_string` the whole old line, `new_string` the whole new line. If the Edit fails because the line is not there exactly once, do not retry with a shorter string: skip the pair and say so in the report. Add each edited file to the `git add --` list of step 9.
 
-This is the only edit a sync makes to a once-class file: one line per adopted pair, only on the user's answer.
+This is the only edit a sync makes to a once-class file the project already holds: one line per adopted pair, only on the user's answer.
 
 ### 3. Auto-Update Files
 
@@ -1173,7 +1173,7 @@ Version labels are server-authoritative under v3 (`template_version` / `template
 
 **Call `template_verify(project_path=<project>, mode="pre_commit")` (v4.0.1, item 22) before writing anything else in this step.** Any `FAIL` line in the result means the sync is **NOT** complete — list every `FAIL` line's `id`, `measured` and `remedy` in the report and fix them (re-run the relevant earlier step) before moving on. `mode="pre_commit"` is deliberate here: the manifest and every applied file are still uncommitted at this point (step 9 commits them), so `tree_clean` correctly SKIPs rather than FAILing — only `mode="post_commit"` (step 9b, after the commit) treats an uncommitted tree as a defect. A SKIP or INFO line is not a blocker; only `FAIL` is.
 
-**Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file (the one exception is step 2d, a line the user adopted), so tell the user to read `template_get_diff` for that file and adopt the lines by hand. It also persists in the manifest (`pending_once_notes`) until the consumer adopts the note (every `**Key**:` its commented example introduced appears in their file) or the template drops that example; later finalizes carry still-unadopted notes forward, while a note that introduced no key is reported by its own sync only (an empty result removes the key). A comment-only once-note (it introduced no key) is informational: it clears on the next finalize whether or not you adopt it, so adopting it by hand is optional.
+**Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file the project already holds (the one exception is step 2d, a line the user adopted), so tell the user to read `template_get_diff` for that file and adopt the lines by hand. It also persists in the manifest (`pending_once_notes`) until the consumer adopts the note (every `**Key**:` its commented example introduced appears in their file) or the template drops that example; later finalizes carry still-unadopted notes forward, while a note that introduced no key is reported by its own sync only (an empty result removes the key). A comment-only once-note (it introduced no key) is informational: it clears on the next finalize whether or not you adopt it, so adopting it by hand is optional.
 
 **Report the line offers (step 2d, v7.1.0).** `Adopted lines:` lists each edited file and its new line. `Skipped lines (offered again at the next sync):` lists the step 2d pairs the user did not adopt (file and old line); a pair whose Edit failed is listed once, as needing a hand edit.
 

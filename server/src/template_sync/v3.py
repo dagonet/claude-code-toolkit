@@ -888,12 +888,16 @@ def line_offers(tpl_at_base: str, tpl_now: str, proj_text: str) -> list[dict]:
     of the project's text (compared literally; a trailing CR is ignored, the
     final newline is no empty line) whose text occurs nowhere else in it, not
     even inside a longer line -- the skill's exact replacement must have one
-    place to land."""
+    place to land. An old line that two pairs share is offered by neither:
+    the second replacement would land inside the first one's new line."""
     held = [l.removesuffix("\r") for l in proj_text.removesuffix("\n").split("\n")]
+    pairs = line_pairs(tpl_at_base, tpl_now)
+    olds = [old for old, _ in pairs]
     return [
         {"old": old, "new": new}
-        for old, new in line_pairs(tpl_at_base, tpl_now)
+        for old, new in pairs
         if old.strip() and old != new and not PLACEHOLDER_RE.search(new)
+        and olds.count(old) == 1
         and held.count(old) == 1 and proj_text.count(old) == 1
     ]
 
@@ -1174,13 +1178,15 @@ def resolve_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
 
 def pending_entries(manifest: dict, key: str) -> list[dict]:
     """The entries of a manifest's `pending_once_*` list that are a dict with
-    a string `file`. A value that is not a list, or an entry of another
-    shape, counts as absent: a hand-damaged manifest must not fail the
-    status, the verify or the finalize."""
+    a non-empty string `file` and a string `from_commit` (finalize writes
+    both, for notes and for lines). A value that is not a list, or an entry
+    of another shape, counts as absent: a hand-damaged manifest must not fail
+    the status, the verify or the finalize."""
     value = manifest.get(key)
     if not isinstance(value, list):
         return []
-    return [p for p in value if isinstance(p, dict) and isinstance(p.get("file"), str) and p["file"]]
+    return [p for p in value if isinstance(p, dict) and isinstance(p.get("file"), str) and p["file"]
+            and isinstance(p.get("from_commit"), str)]
 
 
 def _line_offers_all_bases(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, tpl_rel: str,
@@ -1634,9 +1640,11 @@ def _pending_note_open(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     except Exception:  # noqa: BLE001 -- a diagnostic never fails the finalize
         return True
     if base is not None:
-        added = [l[1:] for h in notes_hunks(base, now) for l in h.splitlines()[1:] if l[:1] == "+"]
+        # split on "\n" only, as _diff_hunks does: splitlines() would also break at
+        # \v, \f and others and strip the "+" off the rest of such a line
+        added = [l[1:] for h in notes_hunks(base, now) for l in h.split("\n")[1:] if l[:1] == "+"]
     else:
-        added = [l for l in now.splitlines() if not KEY_LINE_RE.match(l)]
+        added = [l for l in now.split("\n") if not KEY_LINE_RE.match(l)]
     rule = rules.rule_for(tpl_rel) or {}
     held = parse_keys(proj)
     return any(not find_key(held, m.group("key").strip(), rule)
