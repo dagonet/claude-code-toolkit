@@ -36,7 +36,7 @@ It also applies to any manual `git worktree add` — pass this path explicitly.
 
 - Every Agent spawn names its `model` unless the type owns one; otherwise it inherits the orchestrator's, the dearest.
 - Ladder, haiku < sonnet < opus < fable: lookups, search, summaries (`cct:Explore`, `general-purpose` reading): `haiku`; coding, tests, ops from a clear brief (coders, `cct:tester`, `cct:ops`): `sonnet`; reviews, architecture, safety design (`cct:code-reviewer`, `cct:architect`): `opus` floor, step-up `fable`; other `general-purpose`: `sonnet`.
-- Start each job on the cheapest rung that may do it; on a failed result, start the same job again one step up, and say so in your report to the user. A review that finds the work needs fixes counts as the coder's failure: the fix round's coder starts one step above the model that wrote the code.
+- Start each job on the cheapest rung that may do it; on a failed result, start the same job again one step up, and say so in your report. At `fable`, stop and tell the user. A review that finds the work needs fixes counts as the coder's failure: the fix round's coder starts one step above the model that wrote the code.
 - Reviews, architecture and safety design start on `opus` and never lower. A `Step-up:` note from the hook is an instruction to do exactly that (it reaches you only for foreground spawns; background ones rely on this rule).
 - A review spawn uses `cct:code-reviewer`, which owns its model, rather than `general-purpose` on `opus`; the same holds for other plugins' review steps when they let you pick the type.
 
