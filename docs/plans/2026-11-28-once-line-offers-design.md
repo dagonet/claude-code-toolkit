@@ -62,12 +62,21 @@ For a once-class file whose rule has `"audit": "keys"`, with a project copy and 
 base, `compute_status_v3` adds to `info["key_audit"]`:
 
 - `line_offers`: a list of `{"old": <line>, "new": <line>}`, lines without their line ending;
-- `line_offers_base`: the commit the offers were measured from.
+- `line_offer_bases`: the refs that each yielded at least one offer, in the order measured.
 
-**Base.** If the manifest's `pending_once_lines` holds an entry for the file and its
-`from_commit` resolves, that commit is the base. Otherwise the base is the one `resolve_base`
-gives today (the manifest's `template_commit`), and `line_offers_base` is the manifest's commit.
-Both sides of the diff are `template_content()` renderings, as for `notes_hunks`.
+**Bases** (controller ruling after the Task 1 review, 2026-11-28; it replaces the first draft's
+single base per file). The offers are measured from every base in this order, and joined: each
+`from_commit` the manifest's `pending_once_lines` holds for the file, if it resolves, then the
+base `resolve_base` gives today (the manifest's `template_commit`). An offer whose old line an
+earlier base already offered is dropped. A base that does not resolve, or yields no offer, is
+left out of `line_offer_bases`. Both sides of each diff are `template_content()` renderings, as
+for `notes_hunks`.
+
+Why more than one base: with one base per file, a line the user keeps skipping pins the base at
+its old commit. A second line, adopted earlier and changed again by the template, then shows no
+offer from that old base (the project holds the middle text), and once the skipped line clears
+the base jumps past the change: a silent miss, the kind this feature exists to end. Cost if the
+ruling is wrong: one loop and a list where a string stood.
 
 **Pairing.** Unified diff of base against the current template with no context lines. In a hunk
 that has removed and added lines:
@@ -77,25 +86,27 @@ that has removed and added lines:
 
 Nothing else is paired. A hunk with only removed or only added lines yields nothing.
 
-**Offer.** A pair is an offer when all hold: old differs from new; new holds no `{{...}}`
-token; old stands in the project's file as a whole line exactly once (a trailing `\r` on the
-project's line is ignored for the comparison).
+**Offer.** A pair is an offer when all hold: old is not blank; old differs from new; new holds
+no `{{...}}` token; old stands in the project's file as a whole line exactly once (a trailing
+`\r` on the project's line is ignored for the comparison; the file's final newline does not
+count as an empty line).
 
 `line_offers` is added to the server's capability list.
 
 ### Server: `pending_once_lines` in the manifest
 
 `finalize_v3` already computes the status against the old manifest before it writes the new one.
-From that status it writes `pending_once_lines`: one `{"file", "from_commit"}` per file whose
-`line_offers` is non-empty, with `from_commit` = that file's `line_offers_base`. By then the
-skill has applied the adopted lines, so what remains are the skipped ones. An empty result
-removes the key. A status error leaves the stored list untouched and adds a warning, as for
+From that status it writes `pending_once_lines`: one `{"file", "from_commit"}` per entry of each
+file's `line_offer_bases`, in that order, files sorted. By then the skill has applied the
+adopted lines, so what remains are the skipped ones. An empty result removes the key. A status error leaves the stored list untouched and adds a warning, as for
 `pending_once_notes`. The finalize response returns `pending_once_lines`. The key joins
 `KNOWN_TOP_LEVEL_V3`.
 
-Consequences, all from the one base rule: a skipped line is offered again at the next sync; a
+Consequences, all from the one bases rule: a skipped line is offered again at the next sync; a
 line the template changed twice is offered with the newest text; an adopted or hand-edited line
-drops out; an entry whose commit no longer resolves is replaced by the normal base.
+drops out, and its base with it once no other offer needs it; an entry whose commit no longer
+resolves drops out; a line adopted earlier and changed again is offered from the newer base
+while an older skipped line keeps its own.
 
 ### Skill: one question, exact edits
 
