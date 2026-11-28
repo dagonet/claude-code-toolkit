@@ -5260,6 +5260,15 @@ c76_scan() { # <root> -> one line per mention that names nothing under <root>
     done
   done
 }
+c76_vacuous() { # <root> -> the plugins under <root>/plugins with at least one skill that no scanned file mentions as <plugin>:<skill>
+  local r=$1 p pn
+  for p in "$r"/plugins/*/skills; do
+    [ -d "$p" ] || continue
+    [ -n "$(find "$p" -mindepth 1 -maxdepth 1 -type d)" ] || continue
+    pn=$(basename "$(dirname "$p")")
+    [ -n "$(c76_mentions "$r" "$pn:[A-Za-z][A-Za-z-]*")" ] || echo "$pn"
+  done
+}
 c76_ctl() { # <relative path> <text> -> c76_scan of a root whose only mention is <text> in <path>
   local t; t=$(mktemp -d)
   mkdir -p "$t/skills/sprint" "$t/agents" "$t/output-styles" "$t/plugins/cct-helpers/skills/commit" "$(dirname "$t/$1")"
@@ -5277,12 +5286,23 @@ done
 for c76_p in docs/history.md docs/self-review/r.md docs/plans/p.md skills/sync-template/old-names.sh; do
   [ -z "$(c76_ctl "$c76_p" 'run /cct:commit')" ] || c76_ctl_bad="$c76_ctl_bad $c76_p(excluded)"
 done
+# ... and a plugin with skills that no scanned file mentions is flagged by name (the vacuity guard), a mentioned one is not
+c76_vac_ctl() { # <text> -> c76_vacuous of a root with plugins cct-helpers and foo (both with a skill) and <text> as its only doc
+  local t; t=$(mktemp -d)
+  mkdir -p "$t/plugins/cct-helpers/skills/commit" "$t/plugins/foo/skills/x" "$t/docs"
+  printf '%s\n' "$1" > "$t/docs/guide.md"
+  c76_vacuous "$t" | tr '\n' ' '; rm -rf "$t"
+}
+[ "$(c76_vac_ctl 'run /cct-helpers:commit')" = "foo " ] || c76_ctl_bad="$c76_ctl_bad vacuity(foo unmentioned)"
+[ -z "$(c76_vac_ctl 'run /cct-helpers:commit and /foo:x')" ] || c76_ctl_bad="$c76_ctl_bad vacuity(false positive)"
 c76_bad=$(c76_scan . | tr '\n' ' ')
 c76_n=$(c76_mentions . 'cct:[A-Za-z][A-Za-z-]*' | wc -l)
 c76_pn=$(c76_mentions . '[a-z]+-tools:[a-z]+-coder' | wc -l)
 c76_hn=$(c76_mentions . 'cct-helpers:[A-Za-z][A-Za-z-]*' | wc -l)
 [ "$c76_pn" -gt 0 ] || c76_bad="$c76_bad (no <lang>-tools:<lang>-coder mention found: the plugin-name scan is vacuous)"
-[ "$c76_hn" -gt 0 ] || c76_bad="$c76_bad (no cct-helpers:<skill> mention found: the plugin-skill scan is vacuous)"
+for c76_v in $(c76_vacuous .); do
+  c76_bad="$c76_bad (no $c76_v:<skill> mention found: the plugin-skill scan is vacuous for $c76_v)"
+done
 if [ -n "$c76_ctl_bad" ]; then
   ko "76: CONTROL failed (a stale cct:commit must be flagged in a doc, repo skill, plugin or template and ignored in history, reports, plans and skills/sync-template/old-names.sh only):$c76_ctl_bad"
 elif [ -z "$c76_bad" ]; then
@@ -5774,14 +5794,14 @@ else ok "check 87: all 10 agent type table rows equal their agent file's model, 
 # ---------------------------------------------------------------------------
 echo
 note "Check 88: pinned plugin copies (run-hook.sh and hooks/lib/*.sh in every plugin with hooks equal cct's; hook-class.sh outside its table)"
-c88_strip() { sed '/cls=[a-z]*; pol=[a-z]* ;;$/d' "$1" > "$2"; } # <hook-class.sh> <out>: the file without its class-table DATA lines; `case`, the `*) return 1 ;;` default arm and `esac` stay compared, so a copy that fails open on unknown names is flagged
+c88_strip() { sed -E '/^[[:space:]]*[a-z0-9-]+(\|[a-z0-9-]+)*\)[[:space:]]+cls=[a-z]+; pol=[a-z]+ ;;$/d' "$1" > "$2"; } # <hook-class.sh> <out>: the file without its class-table DATA lines; `case`, the `*) return 1 ;;` default arm and `esac` stay compared, so a copy that fails open on unknown names is flagged
 c88_eval() { # <tree root> -> one PROBLEM line per copy that differs, then "COUNT <plugins>|<files compared>"
   c88_np=0; c88_nf=0
   for c88_d in "$1"/plugins/*/hooks; do
     [ -f "$c88_d/hooks.json" ] || continue
     c88_np=$((c88_np + 1))
     # per plugin (not a global floor): run-hook.sh, hook-class.sh and json.sh at least, plus every lib a script of the plugin names
-    for c88_r in run-hook.sh lib/hook-class.sh lib/json.sh $(grep -ohE 'lib/[A-Za-z0-9_-]+\.sh' "$c88_d"/*.sh 2>/dev/null | sort -u); do
+    for c88_r in $( { printf '%s\n' run-hook.sh lib/hook-class.sh lib/json.sh; grep -ohE 'lib/[A-Za-z0-9_-]+\.sh' "$c88_d"/*.sh 2>/dev/null; } | sort -u); do
       [ -f "$c88_d/$c88_r" ] || echo "PROBLEM ${c88_d#$1/}/$c88_r is missing (every plugin with hooks carries it)"
     done
     for c88_f in "$c88_d/run-hook.sh" "$c88_d"/lib/*.sh; do
@@ -5816,6 +5836,8 @@ c88_mk; rm -f "$c88_tmp/t/$c88_P/lib/json.sh"
 [ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [lib/json.sh deleted from a plugin]"; }
 c88_mk; sed -i 's/pol=open ;;/pol=warn ;;/' "$c88_tmp/t/$c88_P/lib/hook-class.sh"
 [ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -eq 0 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [a changed TABLE line in hook-class.sh was flagged: the table is data]"; }
+c88_mk; printf '    *) cls=machine; pol=open ;;\n' >> "$c88_tmp/t/$c88_P/lib/hook-class.sh"
+[ "$(c88_eval "$c88_tmp/t" | grep -c '^PROBLEM')" -ge 1 ] || { c88_ctl_ok=0; c88_ctl_why="$c88_ctl_why [an added *) cls=machine; pol=open default arm in hook-class.sh was not flagged]"; }
 rm -rf "$c88_tmp"
 if [ "$c88_ctl_ok" -ne 1 ]; then ko "check 88: CONTROL failed:$c88_ctl_why"
 elif [ "${c88_counts%%|*}" -lt 3 ] || [ "${c88_counts##*|}" -lt 11 ]; then ko "check 88: expected at least 3 plugins with hooks (cct-guards, cct-learning, cct-jev) and 11 pinned copies (run-hook.sh, json.sh and hook-class.sh in each, git-cmd.sh in cct-guards, agent-model.sh in cct-jev), got plugins|files '$c88_counts'"
