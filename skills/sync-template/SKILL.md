@@ -436,6 +436,16 @@ Two general rules govern how they, and every guard in this file, are written. Ne
 >
 > So it is **checked at the point of the first write, like I2**, not asserted as an ordering rule: before the first write of the sync, if `TEMPLATE_DELETED` contains an agent file, refuse until the baseline exists. It is **gated on a non-empty `TEMPLATE_DELETED`**, so it costs an ordinary sync nothing at all. Agent files handled by step 2c (the v5.0 migration) are exempt: its single confirmation replaces the 6d sweep for them.
 
+### 2d. Offer changed once-class lines (v7.1.0, capability `line_offers`)
+
+Run this only when the server's capabilities list `line_offers`; otherwise skip it silently. Do it before step 7, so finalize records only the lines that stayed open.
+
+For each once-class file whose `key_audit.line_offers` is non-empty, show every pair numbered, the old line above the new line, verbatim. Ask once which pairs to adopt: all, none, or numbers. No answer, or a run where the user cannot be asked, means none.
+
+For each adopted pair, replace exactly that one line with the Edit tool: `old_string` the whole old line, `new_string` the whole new line. If the Edit fails because the line is not there exactly once, do not retry with a shorter string: skip the pair and say so in the report. Add each edited file to the `git add --` list of step 9.
+
+This is the only edit a sync makes to a once-class file: one line per adopted pair, only on the user's answer.
+
 ### 3. Auto-Update Files
 
 **`CLAUDE.md` under manifest v4 has no keep-mine route at all — see step 4 for the CONFLICT case.** When it shows up here as a clean `AUTO_UPDATE`, apply it exactly like any other template-class file: `template_apply_file(source="template")`. There is no region left to preserve and no splice to compose; the whole file is template-owned. Same session-start-delivery rule as `.claude/project-instructions.md` (step 5): the new content is only **picked up at the next session start**, not the moment it is written.
@@ -1163,7 +1173,9 @@ Version labels are server-authoritative under v3 (`template_version` / `template
 
 **Call `template_verify(project_path=<project>, mode="pre_commit")` (v4.0.1, item 22) before writing anything else in this step.** Any `FAIL` line in the result means the sync is **NOT** complete — list every `FAIL` line's `id`, `measured` and `remedy` in the report and fix them (re-run the relevant earlier step) before moving on. `mode="pre_commit"` is deliberate here: the manifest and every applied file are still uncommitted at this point (step 9 commits them), so `tree_clean` correctly SKIPs rather than FAILing — only `mode="post_commit"` (step 9b, after the commit) treats an uncommitted tree as a defect. A SKIP or INFO line is not a blocker; only `FAIL` is.
 
-**Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file, so tell the user to read `template_get_diff` for that file and adopt the lines by hand. It also persists in the manifest (`pending_once_notes`) until the consumer adopts the note (every `**Key**:` its commented example introduced appears in their file) or the template drops that example; later finalizes carry still-unadopted notes forward, while a note that introduced no key is reported by its own sync only (an empty result removes the key). A comment-only once-note (it introduced no key) is informational: it clears on the next finalize whether or not you adopt it, so adopting it by hand is optional.
+**Report `pending_once_notes`** (the finalize response, v4.3.1; also in `template_verify`'s `once_notes_changed` line): each entry names a once-class file whose template guidance comments — typically a new optional key's commented example — changed in this sync. The sync never edits a once-class file (the one exception is step 2d, a line the user adopted), so tell the user to read `template_get_diff` for that file and adopt the lines by hand. It also persists in the manifest (`pending_once_notes`) until the consumer adopts the note (every `**Key**:` its commented example introduced appears in their file) or the template drops that example; later finalizes carry still-unadopted notes forward, while a note that introduced no key is reported by its own sync only (an empty result removes the key). A comment-only once-note (it introduced no key) is informational: it clears on the next finalize whether or not you adopt it, so adopting it by hand is optional.
+
+**Report the line offers (step 2d, v7.1.0).** `Adopted lines:` lists each edited file and its new line. `Skipped lines (offered again at the next sync):` lists the finalize response's `pending_once_lines` (`file`, `from_commit`) plus any pair whose Edit failed.
 
 **Report a missing pre-push hook (v4.3.2).** Run `grep -qE 'claude-code-toolkit pre-push shim|hooks/git-pre-push\.sh' "$(git rev-parse --path-format=absolute --git-path hooks/pre-push)"`. If it fails, report `pre-push hook missing` and the one install command `bash hooks/git-pre-push.sh --install`. Never install it from the sync -- only a new project gets it at setup.
 
@@ -1312,7 +1324,7 @@ Stage exactly the sync's touched files — the list is already in hand: every `a
 **The full sequence under v2.1.3+ hooks — the order is load-bearing:**
 
 ```sh
-git add -- <applied_files from step 7> <git-rm'd paths from step 6> .claude/template-manifest.json
+git add -- <applied_files from step 7> <git-rm'd paths from step 6> <once-class files edited in step 2d> .claude/template-manifest.json
 # the sync commit is sync-only: the project's own docs (PROJECT_STATE.md, plans, ...) never go in it;
 # commit them separately, on the same branch if wanted
 # write the message to a FILE first (Write tool), with the line `Item: none` in its final trailer block, directly above any Co-Authored-By line, no blank line between, then:
@@ -1424,6 +1436,7 @@ For each new arm: delete the arm, re-run the suite, count the rows that flip. **
 ## Rules
 
 - NEVER auto-update a `CONFLICT` file without user confirmation
+- NEVER edit a once-class file, except the one-line edits of step 2d: one line per adopted pair, only on the user's answer
 - NEVER delete a project-owned file the template never shipped. A `TEMPLATE_DELETED` file is different: ask, and delete it with `git rm` when the user accepts (step 6)
 - NEVER apply an `auto_merged` body without checking it for dropped lines — and, for a hook, without a `bash -n`
 - NEVER finalize without the hook-script verification (step 6b), sourced libs included — a missing script or lib fails open and silently disables enforcement
