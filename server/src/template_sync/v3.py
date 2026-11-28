@@ -832,11 +832,13 @@ def _diff_hunks(tpl_at_sync: str, tpl_now: str, n: int) -> list[list[str]]:
         tpl_at_sync.splitlines(keepends=True), tpl_now.splitlines(keepends=True),
         fromfile="template@sync", tofile="template@now", n=n,
     ))
+    # The `---`/`+++` file headers come before the first `@@`, where no hunk
+    # is open; every line after it is content, even one starting `--`/`++`.
     hunks: list[list[str]] = []
     for line in lines:
         if line.startswith("@@"):
             hunks.append([line])
-        elif hunks and not line.startswith(("---", "+++")):
+        elif hunks:
             hunks[-1].append(line)
     return hunks
 
@@ -874,14 +876,16 @@ def _lines_by_key(lines: list[str]) -> dict[str, list[str]]:
 
 
 def line_offers(tpl_at_base: str, tpl_now: str, proj_text: str) -> list[dict]:
-    """The pairs the project can adopt: old != new, no `{{...}}` left in the
-    new line, and the old line is exactly one whole line of the project's
-    text (compared literally; a trailing CR is ignored)."""
-    held = [l.rstrip("\r") for l in proj_text.split("\n")]
+    """The pairs the project can adopt: old is not blank, old != new, no
+    `{{...}}` left in the new line, and the old line is exactly one whole line
+    of the project's text (compared literally; a trailing CR is ignored, the
+    final newline is no empty line)."""
+    held = [l.removesuffix("\r") for l in proj_text.removesuffix("\n").split("\n")]
     return [
         {"old": old, "new": new}
         for old, new in line_pairs(tpl_at_base, tpl_now)
-        if old != new and not PLACEHOLDER_RE.search(new) and held.count(old) == 1
+        if old.strip() and old != new and not PLACEHOLDER_RE.search(new)
+        and held.count(old) == 1
     ]
 
 
@@ -1159,19 +1163,35 @@ def resolve_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     return None, "unavailable", "migration_base_unavailable"
 
 
-def _line_offers_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, tpl_rel: str,
-                      proj_rel: str, base: str | None, base_label: str) -> tuple[str | None, str]:
-    """(text, ref) line offers are measured from: the commit a skipped offer
-    was first made from (manifest pending_once_lines) when it still resolves,
-    else the normal base. A skipped line so returns, with the newest text."""
+def _line_offers_all_bases(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, tpl_rel: str,
+                           proj_rel: str, base: str, base_label: str, tpl_now: str,
+                           proj_text: str) -> tuple[list[dict], list[str]]:
+    """(offers, refs that yielded one): measured from every commit a skipped
+    offer was made from (manifest pending_once_lines) that still resolves, in
+    stored order, then from the audit's base. An offer whose old line an
+    earlier base already offered is dropped. A skipped line so returns with
+    the newest text, and a line adopted earlier and changed again is offered
+    from the newer base beside it (spec "Bases")."""
+    bases: list[tuple[str, str]] = []
     for p in manifest.get("pending_once_lines") or []:
         if isinstance(p, dict) and p.get("file") == proj_rel and p.get("from_commit"):
             text, _, _ = resolve_base(pp, {**manifest, "template_commit": p["from_commit"],
                                            "lastSynced": None, "template_version": None},
                                       rules, tpl_rel)
             if text is not None:
-                return text, p["from_commit"]
-    return base, base_label
+                bases.append((p["from_commit"], text))
+    bases.append((base_label, base))
+
+    offers: list[dict] = []
+    refs: list[str] = []
+    for ref, text in bases:
+        seen = {o["old"] for o in offers}
+        new = [o for o in line_offers(text, tpl_now, proj_text) if o["old"] not in seen]
+        if new:
+            offers.extend(new)
+            if ref not in refs:
+                refs.append(ref)
+    return offers, refs
 
 
 # -------------------------
@@ -1258,11 +1278,9 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
                     audit["base"] = base_label
                     if base is not None:
                         audit["template_notes_changed"] = notes_hunks(base, tpl_replaced)
-                    offers_text, offers_base = _line_offers_base(
-                        pp, manifest, rules, tpl_rel, proj_rel, base, base_label)
-                    if offers_text is not None:
-                        audit["line_offers"] = line_offers(offers_text, tpl_replaced, proj_content)
-                        audit["line_offers_base"] = offers_base
+                        audit["line_offers"], audit["line_offer_bases"] = _line_offers_all_bases(
+                            pp, manifest, rules, tpl_rel, proj_rel, base, base_label,
+                            tpl_replaced, proj_content)
                     info["key_audit"] = audit
             elif tpl_replaced is None:
                 status = "TEMPLATE_DELETED"
@@ -1756,12 +1774,12 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
                 have.add(prev["file"])
         pending.sort(key=lambda p: p["file"])
         # B-18: line offers still open once the skill has applied the adopted
-        # ones are the skipped ones; they come back from the same base.
+        # ones are the skipped ones; they come back from the same bases.
         pending_lines = [
-            {"file": path, "from_commit": info["key_audit"]["line_offers_base"]}
+            {"file": path, "from_commit": ref}
             for path, info in sorted(st.get("files", {}).items())
             if info.get("ownership") == "once"
-            and (info.get("key_audit") or {}).get("line_offers")
+            for ref in (info.get("key_audit") or {}).get("line_offer_bases") or []
         ]
     else:
         err = st.get("error") if isinstance(st, dict) else "compute_status_v3 returned a non-dict result"

@@ -479,3 +479,15 @@ def test_line_offers_compare_whole_lines_literally():
     assert v3.line_offers(base, now, "- **K**: aXb (c)* `d`\n") == []           # `.` is not a wildcard
     assert v3.line_offers(base, now, "pre - **K**: a.b (c)* `d`\n") == []        # not a whole line
     assert len(v3.line_offers(base, now, "- **K**: a.b (c)* `d`\n")) == 1
+
+
+def test_line_pairs_keep_lines_that_start_with_dashes_or_pluses():
+    assert v3.line_pairs("x\n---\nold note\ny\n", "x\nnew note\ny\n") == []          # 2 removed, 1 added
+    assert v3.line_pairs("x\nold note\ny\n", "x\n++i counter\nnew note\ny\n") == []  # 1 removed, 2 added
+    assert v3.line_pairs("x\n--- old\ny\n", "x\n--- new\ny\n") == [("--- old", "--- new")]
+
+
+def test_line_offers_never_offer_a_blank_old_line():
+    assert v3.line_offers("x\n\ny\n", "x\nz\ny\n", "a\nb\n") == []        # the final newline is no blank line
+    assert v3.line_offers("x\n\ny\n", "x\nz\ny\n", "a\n\nb\n") == []      # a real blank line, held once: still none
+    assert v3.line_offers("x\n  \ny\n", "x\nz\ny\n", "a\n  \nb\n") == []

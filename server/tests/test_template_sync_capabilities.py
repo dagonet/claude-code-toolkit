@@ -379,7 +379,7 @@ def _witness_line_offers(tmp_path) -> bool:
     res = v3.compute_status_v3(proj, manifest, v3.load_ownership(str(repo)))
     audit = res["files"]["PROJECT_CONTEXT.md"]["key_audit"]
     return (audit["line_offers"] == [{"old": "- **Gate**: old", "new": "- **Gate**: new"}]
-            and audit["line_offers_base"] == held
+            and audit["line_offer_bases"] == [held]
             and "line_offers" in v3.CAPABILITIES)
 
 

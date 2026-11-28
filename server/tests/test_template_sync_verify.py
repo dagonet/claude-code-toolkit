@@ -1605,7 +1605,7 @@ def test_status_reports_a_line_offer_for_a_held_old_line(tmp_path):
     repo, proj, old_commit, new_commit = _line_changed_fixture(tmp_path)
     audit = _key_audit(repo, proj)
     assert audit["line_offers"] == [{"old": OLD_GATE, "new": "- **Gate**: bash scripts/gate2.sh"}]
-    assert audit["line_offers_base"] == old_commit
+    assert audit["line_offer_bases"] == [old_commit]
 
 
 def test_finalize_records_a_skipped_line_and_the_next_sync_offers_it_again(tmp_path):
@@ -1618,7 +1618,7 @@ def test_finalize_records_a_skipped_line_and_the_next_sync_offers_it_again(tmp_p
     assert _read_manifest(proj)["template_commit"] == new_commit
     audit = _key_audit(repo, proj)
     assert audit["line_offers"] == [{"old": OLD_GATE, "new": "- **Gate**: bash scripts/gate2.sh"}]
-    assert audit["line_offers_base"] == old_commit
+    assert audit["line_offer_bases"] == [old_commit]
 
 
 def test_adopted_line_clears_the_pending_entry(tmp_path):
@@ -1638,7 +1638,7 @@ def test_skipped_offer_returns_with_the_newest_text(tmp_path):
     _set_template_gate(repo, "gate3.sh")
     audit = _key_audit(repo, proj)
     assert audit["line_offers"] == [{"old": OLD_GATE, "new": "- **Gate**: bash scripts/gate3.sh"}]
-    assert audit["line_offers_base"] == old_commit
+    assert audit["line_offer_bases"] == [old_commit]
 
 
 def test_pending_line_entry_with_a_lost_commit_falls_back(tmp_path):
@@ -1647,7 +1647,7 @@ def test_pending_line_entry_with_a_lost_commit_falls_back(tmp_path):
     m["pending_once_lines"] = [{"file": "PROJECT_CONTEXT.md", "from_commit": "0" * 40}]
     _write_manifest(proj, m)
     audit = _key_audit(repo, proj)             # no error key: _key_audit asserts it
-    assert audit["line_offers_base"] == m["template_commit"]
+    assert audit["line_offer_bases"] == [m["template_commit"]]
     res = _finalize(proj)
     assert "0" * 40 not in json.dumps(_read_manifest(proj).get("pending_once_lines", []))
     assert "0" * 40 not in json.dumps(res["pending_once_lines"])
@@ -1680,6 +1680,39 @@ def test_no_offer_touches_the_existing_note_list(tmp_path):
     res = _finalize(proj)
     assert res["pending_once_notes"] == []
     assert "pending_once_notes" not in _read_manifest(proj)
+
+
+def _set_template_context(repo, text, message):
+    tpl = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "PROJECT_CONTEXT.md")
+    tpl.write_text(text, encoding="utf-8", newline="")
+    _recommit(repo, message)
+    return _git_out(repo, "rev-parse", "HEAD")
+
+
+def test_adopted_line_that_changes_again_is_offered_beside_an_older_skip(tmp_path):
+    # The fixture's template (A) already holds two key lines: K1 = Gate, K2 = Protected branches.
+    repo, proj, a = _good_fixture(tmp_path)
+    k2_a, k2_b = "- **Protected branches**: main", "- **Protected branches**: main, release"
+    k1_b, k1_c = "- **Gate**: bash scripts/gate2.sh", "- **Gate**: bash scripts/gate3.sh"
+    b = _set_template_context(repo, f"{k2_b}\n{k1_b}\n", "template B changes both key lines")
+    ctx = proj / "PROJECT_CONTEXT.md"
+    ctx.write_text(f"{k2_a}\n{k1_b}\n", encoding="utf-8", newline="")   # adopts K1's B text, keeps K2's A text
+    _finalize(proj)
+    assert _read_manifest(proj)["pending_once_lines"] == [{"file": "PROJECT_CONTEXT.md", "from_commit": a}]
+
+    _set_template_context(repo, f"{k2_b}\n{k1_c}\n", "template C changes K1 again")
+    audit = _key_audit(repo, proj)
+    assert audit["line_offers"] == [{"old": k2_a, "new": k2_b}, {"old": k1_b, "new": k1_c}]
+    assert audit["line_offer_bases"] == [a, b]
+    res = _finalize(proj)
+    want = [{"file": "PROJECT_CONTEXT.md", "from_commit": a}, {"file": "PROJECT_CONTEXT.md", "from_commit": b}]
+    assert res["pending_once_lines"] == want
+    assert _read_manifest(proj)["pending_once_lines"] == want
+
+    ctx.write_text(f"{k2_b}\n{k1_b}\n", encoding="utf-8", newline="")   # adopts K2 by hand
+    res = _finalize(proj)
+    assert res["pending_once_lines"] == [{"file": "PROJECT_CONTEXT.md", "from_commit": b}]
+    assert _read_manifest(proj)["pending_once_lines"] == [{"file": "PROJECT_CONTEXT.md", "from_commit": b}]
 
 
 # --- v4.5.2: retired_rule_names (INFO) ---------------------------------------
