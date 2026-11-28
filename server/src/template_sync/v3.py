@@ -67,6 +67,7 @@ CAPABILITIES = (
     "template_verify",
     "deleted_acknowledged",
     "registered_tools",
+    "line_offers",
 )
 # CAPABILITIES mixes three kinds of name -- a FIELD a response carries
 # (local_diff_kind), a BEHAVIOUR (region_splice), and a TOOL that must be
@@ -208,6 +209,8 @@ KNOWN_TOP_LEVEL_V3 = {
     "deletedAcknowledged",
     # v4.3.1 S1: written by finalize, read by template_verify
     "pending_once_notes",
+    # v7.1.0 B-18: skipped line offers, written by finalize
+    "pending_once_lines",
     # v2 keys that migration removes; listed so they are never reported as unknown
     "version",
     # v4 declarations (spec §5 header, Decision 2): the paths are fixed today;
@@ -821,12 +824,13 @@ def find_orphans(project_root: pathlib.Path, rules: OwnershipRules,
     return sorted(found)
 
 
-def notes_hunks(tpl_at_sync: str, tpl_now: str) -> list[str]:
-    """Hunks of the template-side diff that touch no **Key**: line (review §7c)."""
+def _diff_hunks(tpl_at_sync: str, tpl_now: str, n: int) -> list[list[str]]:
+    """Unified-diff hunks of the template-side diff, each a list whose first
+    item is the `@@` header, with `n` context lines."""
     from difflib import unified_diff
     lines = list(unified_diff(
         tpl_at_sync.splitlines(keepends=True), tpl_now.splitlines(keepends=True),
-        fromfile="template@sync", tofile="template@now", n=1,
+        fromfile="template@sync", tofile="template@now", n=n,
     ))
     hunks: list[list[str]] = []
     for line in lines:
@@ -834,6 +838,56 @@ def notes_hunks(tpl_at_sync: str, tpl_now: str) -> list[str]:
             hunks.append([line])
         elif hunks and not line.startswith(("---", "+++")):
             hunks[-1].append(line)
+    return hunks
+
+
+def line_pairs(tpl_at_base: str, tpl_now: str) -> list[tuple[str, str]]:
+    """(old, new) template lines, without line endings, in file order.
+
+    Strict pairing (B-18), on a no-context diff: a hunk of exactly one removed
+    and one added line is a pair whatever the lines are; otherwise a removed
+    and an added **Key**: line with the same key name, each the only one of
+    that name in the hunk. Nothing else pairs -- no guessing."""
+    pairs: list[tuple[str, str]] = []
+    for h in _diff_hunks(tpl_at_base, tpl_now, 0):
+        removed = [l[1:].rstrip("\r\n") for l in h[1:] if l.startswith("-")]
+        added = [l[1:].rstrip("\r\n") for l in h[1:] if l.startswith("+")]
+        if len(removed) == 1 and len(added) == 1:
+            pairs.append((removed[0], added[0]))
+            continue
+
+        old_by_key, new_by_key = _lines_by_key(removed), _lines_by_key(added)
+        for key, olds in old_by_key.items():
+            news = new_by_key.get(key, [])
+            if len(olds) == 1 and len(news) == 1:
+                pairs.append((olds[0], news[0]))
+    return pairs
+
+
+def _lines_by_key(lines: list[str]) -> dict[str, list[str]]:
+    keyed: dict[str, list[str]] = {}
+    for l in lines:
+        m = KEY_LINE_RE.match(l)
+        if m:
+            keyed.setdefault(m.group("key").strip(), []).append(l)
+    return keyed
+
+
+def line_offers(tpl_at_base: str, tpl_now: str, proj_text: str) -> list[dict]:
+    """The pairs the project can adopt: old != new, no `{{...}}` left in the
+    new line, and the old line is exactly one whole line of the project's
+    text (compared literally; a trailing CR is ignored)."""
+    held = [l.rstrip("\r") for l in proj_text.split("\n")]
+    return [
+        {"old": old, "new": new}
+        for old, new in line_pairs(tpl_at_base, tpl_now)
+        if old != new and not PLACEHOLDER_RE.search(new) and held.count(old) == 1
+    ]
+
+
+def notes_hunks(tpl_at_sync: str, tpl_now: str) -> list[str]:
+    """Hunks of the template-side diff that touch no **Key**: line (review §7c)."""
+    hunks = _diff_hunks(tpl_at_sync, tpl_now, 1)
     out = []
     for h in hunks:
         # Key-line changes are the audit's business; drop them from the hunk
@@ -1105,6 +1159,21 @@ def resolve_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     return None, "unavailable", "migration_base_unavailable"
 
 
+def _line_offers_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, tpl_rel: str,
+                      proj_rel: str, base: str | None, base_label: str) -> tuple[str | None, str]:
+    """(text, ref) line offers are measured from: the commit a skipped offer
+    was first made from (manifest pending_once_lines) when it still resolves,
+    else the normal base. A skipped line so returns, with the newest text."""
+    for p in manifest.get("pending_once_lines") or []:
+        if isinstance(p, dict) and p.get("file") == proj_rel and p.get("from_commit"):
+            text, _, _ = resolve_base(pp, {**manifest, "template_commit": p["from_commit"],
+                                           "lastSynced": None, "template_version": None},
+                                      rules, tpl_rel)
+            if text is not None:
+                return text, p["from_commit"]
+    return base, base_label
+
+
 # -------------------------
 # The v3-manifest window (spec §7, ruling R-J)
 # -------------------------
@@ -1189,6 +1258,11 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
                     audit["base"] = base_label
                     if base is not None:
                         audit["template_notes_changed"] = notes_hunks(base, tpl_replaced)
+                    offers_text, offers_base = _line_offers_base(
+                        pp, manifest, rules, tpl_rel, proj_rel, base, base_label)
+                    if offers_text is not None:
+                        audit["line_offers"] = line_offers(offers_text, tpl_replaced, proj_content)
+                        audit["line_offers_base"] = offers_base
                     info["key_audit"] = audit
             elif tpl_replaced is None:
                 status = "TEMPLATE_DELETED"
@@ -1655,6 +1729,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     # note still open; a status error leaves the stored list untouched and
     # says so in `warnings` -- a diagnostic must never fail the finalize.
     pending = None
+    pending_lines = None
     try:
         st = compute_status_v3(pp, manifest, rules)
     except Exception as e:  # noqa: BLE001
@@ -1680,9 +1755,18 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
                 pending.append(prev)
                 have.add(prev["file"])
         pending.sort(key=lambda p: p["file"])
+        # B-18: line offers still open once the skill has applied the adopted
+        # ones are the skipped ones; they come back from the same base.
+        pending_lines = [
+            {"file": path, "from_commit": info["key_audit"]["line_offers_base"]}
+            for path, info in sorted(st.get("files", {}).items())
+            if info.get("ownership") == "once"
+            and (info.get("key_audit") or {}).get("line_offers")
+        ]
     else:
         err = st.get("error") if isinstance(st, dict) else "compute_status_v3 returned a non-dict result"
         warnings.append(f"pending_once_notes not recomputed: {err}")
+        warnings.append(f"pending_once_lines not recomputed: {err}")
 
     out = {k: v for k, v in manifest.items() if k != "version"}
     # finalize_v3 serves both v3 and v4 manifests (v3.manifest_supported
@@ -1697,6 +1781,11 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
             out["pending_once_notes"] = pending
         else:
             out.pop("pending_once_notes", None)
+    if pending_lines is not None:
+        if pending_lines:
+            out["pending_once_lines"] = pending_lines
+        else:
+            out.pop("pending_once_lines", None)
     out["requires_server"], raised, floor_warning = raise_floor(manifest.get("requires_server"))
     if floor_warning:
         warnings.append(floor_warning)
@@ -1719,6 +1808,7 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         "files_added": added,
         "files_dropped": len(dropped),
         "pending_once_notes": out.get("pending_once_notes", []),
+        "pending_once_lines": out.get("pending_once_lines", []),
         "dropped_entries": sorted(dropped),
         "superseded_keys_dropped": superseded_dropped,
         "unknown_keys": unknown,

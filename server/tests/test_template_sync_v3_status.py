@@ -432,3 +432,50 @@ def test_compute_status_v3_root_consumer_file_stays_project(tmp_path):
     assert "preflight.sh" not in res["files"]
     assert res["orphans"] == ["preflight.sh"]
     assert res["new_template_files"] == []
+
+
+# --- B-18: line pairs and line offers (pure functions) -----------------------
+
+def test_line_pairs_single_changed_key_line():
+    base = "- **Ollama**: see CLAUDE.local.md\n- **Gate**: g\n"
+    now = "- **Ollama**: see the mcp-usage skill\n- **Gate**: g\n"
+    assert v3.line_pairs(base, now) == [("- **Ollama**: see CLAUDE.local.md", "- **Ollama**: see the mcp-usage skill")]
+
+
+def test_line_pairs_match_key_lines_by_name_in_a_multi_line_hunk():
+    # two adjacent key lines change, and their order swaps in the template
+    base = "- **A**: 1\n- **B**: 2\n"
+    now = "- **B**: 20\n- **A**: 10\n"
+    assert sorted(v3.line_pairs(base, now)) == [("- **A**: 1", "- **A**: 10"), ("- **B**: 2", "- **B**: 20")]
+
+
+def test_line_pairs_one_to_one_hunk_pairs_any_lines():
+    assert v3.line_pairs("x\nold note\ny\n", "x\nnew note\ny\n") == [("old note", "new note")]
+
+
+def test_line_pairs_nothing_for_additions_deletions_and_unequal_non_key_hunks():
+    assert v3.line_pairs("a\n", "a\nb\n") == []
+    assert v3.line_pairs("a\nb\n", "a\n") == []
+    assert v3.line_pairs("a\nb\nc\n", "a\nx\ny\nz\nc\n") == []
+
+
+def test_line_offers_need_the_old_line_exactly_once():
+    base, now = "- **K**: old\n", "- **K**: new\n"
+    assert v3.line_offers(base, now, "- **K**: old\n") == [{"old": "- **K**: old", "new": "- **K**: new"}]
+    assert v3.line_offers(base, now, "- **K**: mine\n") == []                  # customized
+    assert v3.line_offers(base, now, "- **K**: old\n<!-- \n- **K**: old\n-->\n") == []   # twice
+
+
+def test_line_offers_match_a_crlf_project_line():
+    assert len(v3.line_offers("- **K**: old\n", "- **K**: new\n", "x\r\n- **K**: old\r\ny\r\n")) == 1
+
+
+def test_line_offers_skip_a_placeholder_in_the_new_line():
+    assert v3.line_offers("- **K**: old\n", "- **K**: {{X}}\n", "- **K**: old\n") == []
+
+
+def test_line_offers_compare_whole_lines_literally():
+    base, now = "- **K**: a.b (c)* `d`\n", "- **K**: new\n"
+    assert v3.line_offers(base, now, "- **K**: aXb (c)* `d`\n") == []           # `.` is not a wildcard
+    assert v3.line_offers(base, now, "pre - **K**: a.b (c)* `d`\n") == []        # not a whole line
+    assert len(v3.line_offers(base, now, "- **K**: a.b (c)* `d`\n")) == 1

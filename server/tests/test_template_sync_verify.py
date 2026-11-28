@@ -1569,6 +1569,119 @@ def test_finalize_keeps_pending_once_notes_when_status_fails(tmp_path, monkeypat
     assert any("pending_once_notes not recomputed: boom" in w for w in res["warnings"])
 
 
+# --- B-18: line offers for once-class files -----------------------------------
+
+OLD_GATE = "- **Gate**: bash scripts/gate.sh"
+
+
+def _set_template_gate(repo, script):
+    tpl = ts._template_file_path({"templateRepo": str(repo), "variant": "general"}, "PROJECT_CONTEXT.md")
+    tpl.write_text(CONTEXT_CONTENT.replace("gate.sh", script), encoding="utf-8", newline="")
+    _recommit(repo, f"template Gate line now {script}")
+    return _git_out(repo, "rev-parse", "HEAD")
+
+
+def _line_changed_fixture(tmp_path, fixture=_good_fixture):
+    repo, proj, old_commit = fixture(tmp_path)
+    new_commit = _set_template_gate(repo, "gate2.sh")
+    return repo, proj, old_commit, new_commit
+
+
+def _key_audit(repo, proj) -> dict:
+    status = v3.compute_status_v3(proj, _read_manifest(proj), v3.load_ownership(str(repo)))
+    assert "error" not in status
+    return status["files"]["PROJECT_CONTEXT.md"]["key_audit"]
+
+
+def _finalize(proj) -> dict:
+    return json.loads(asyncio.run(ts.template_finalize_sync(str(proj))))
+
+
+def test_pending_once_lines_is_a_known_top_level_key():
+    assert "pending_once_lines" in v3.KNOWN_TOP_LEVEL_V3
+
+
+def test_status_reports_a_line_offer_for_a_held_old_line(tmp_path):
+    repo, proj, old_commit, new_commit = _line_changed_fixture(tmp_path)
+    audit = _key_audit(repo, proj)
+    assert audit["line_offers"] == [{"old": OLD_GATE, "new": "- **Gate**: bash scripts/gate2.sh"}]
+    assert audit["line_offers_base"] == old_commit
+
+
+def test_finalize_records_a_skipped_line_and_the_next_sync_offers_it_again(tmp_path):
+    repo, proj, old_commit, new_commit = _line_changed_fixture(tmp_path)
+    res = _finalize(proj)
+    want = [{"file": "PROJECT_CONTEXT.md", "from_commit": old_commit}]
+    assert res["pending_once_lines"] == want
+    assert "pending_once_lines" not in res["unknown_keys"]
+    assert _read_manifest(proj)["pending_once_lines"] == want
+    assert _read_manifest(proj)["template_commit"] == new_commit
+    audit = _key_audit(repo, proj)
+    assert audit["line_offers"] == [{"old": OLD_GATE, "new": "- **Gate**: bash scripts/gate2.sh"}]
+    assert audit["line_offers_base"] == old_commit
+
+
+def test_adopted_line_clears_the_pending_entry(tmp_path):
+    repo, proj, old_commit, new_commit = _line_changed_fixture(tmp_path)
+    _finalize(proj)
+    ctx = proj / "PROJECT_CONTEXT.md"
+    ctx.write_text(ctx.read_text(encoding="utf-8").replace("gate.sh", "gate2.sh"),
+                   encoding="utf-8", newline="")
+    res = _finalize(proj)
+    assert res["pending_once_lines"] == []
+    assert "pending_once_lines" not in _read_manifest(proj)
+
+
+def test_skipped_offer_returns_with_the_newest_text(tmp_path):
+    repo, proj, old_commit, new_commit = _line_changed_fixture(tmp_path)
+    _finalize(proj)
+    _set_template_gate(repo, "gate3.sh")
+    audit = _key_audit(repo, proj)
+    assert audit["line_offers"] == [{"old": OLD_GATE, "new": "- **Gate**: bash scripts/gate3.sh"}]
+    assert audit["line_offers_base"] == old_commit
+
+
+def test_pending_line_entry_with_a_lost_commit_falls_back(tmp_path):
+    repo, proj, old_commit, new_commit = _line_changed_fixture(tmp_path)
+    m = _read_manifest(proj)
+    m["pending_once_lines"] = [{"file": "PROJECT_CONTEXT.md", "from_commit": "0" * 40}]
+    _write_manifest(proj, m)
+    audit = _key_audit(repo, proj)             # no error key: _key_audit asserts it
+    assert audit["line_offers_base"] == m["template_commit"]
+    res = _finalize(proj)
+    assert "0" * 40 not in json.dumps(_read_manifest(proj).get("pending_once_lines", []))
+    assert "0" * 40 not in json.dumps(res["pending_once_lines"])
+
+
+def test_finalize_keeps_pending_once_lines_when_status_fails(tmp_path, monkeypatch):
+    repo, proj, commit = _good_fixture(tmp_path)
+    m = _read_manifest(proj)
+    kept = [{"file": "PROJECT_CONTEXT.md", "from_commit": "a" * 40}]
+    m["pending_once_lines"] = kept
+    _write_manifest(proj, m)
+    monkeypatch.setattr(v3, "compute_status_v3", lambda *a, **k: {"error": "boom"})
+    res = _finalize(proj)
+    assert _read_manifest(proj)["pending_once_lines"] == kept
+    assert res["pending_once_lines"] == kept
+    assert any("pending_once_lines not recomputed: boom" in w for w in res["warnings"])
+
+
+def test_line_offers_on_a_v4_manifest(tmp_path):
+    repo, proj, old_commit, new_commit = _line_changed_fixture(tmp_path, _good_fixture_v4)
+    assert _read_manifest(proj)["manifest_version"] == 4
+    audit = _key_audit(repo, proj)
+    assert audit["line_offers"] == [{"old": OLD_GATE, "new": "- **Gate**: bash scripts/gate2.sh"}]
+    res = _finalize(proj)
+    assert res["pending_once_lines"] == [{"file": "PROJECT_CONTEXT.md", "from_commit": old_commit}]
+
+
+def test_no_offer_touches_the_existing_note_list(tmp_path):
+    repo, proj, old_commit, new_commit = _line_changed_fixture(tmp_path)
+    res = _finalize(proj)
+    assert res["pending_once_notes"] == []
+    assert "pending_once_notes" not in _read_manifest(proj)
+
+
 # --- v4.5.2: retired_rule_names (INFO) ---------------------------------------
 
 def test_retired_rule_names_reported_in_once_class_file(v4_consumer):

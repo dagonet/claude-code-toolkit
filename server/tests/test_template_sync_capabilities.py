@@ -53,6 +53,7 @@ EXPECTED = {
     "template_verify",
     "deleted_acknowledged",
     "registered_tools",
+    "line_offers",
 }
 
 
@@ -341,6 +342,47 @@ def _witness_registered_tools(tmp_path) -> bool:
             and "template_verify" in res["registered_tools"])
 
 
+def _witness_line_offers(tmp_path) -> bool:
+    """Exercised through a real `compute_status_v3` call on a git-backed
+    template whose once-class PROJECT_CONTEXT.md line changed after the held
+    commit while the project still holds the old line: the status carries the
+    offer and the commit it was measured from."""
+    def git(*args):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                       cwd=str(repo), check=True, capture_output=True)
+
+    repo = tmp_path / "tk"
+    tpl = repo / "templates" / "general" / "PROJECT_CONTEXT.md"
+    tpl.parent.mkdir(parents=True)
+    (repo / "templates" / "ownership.json").write_text(json.dumps({
+        "tracked_paths": ["templates"],
+        "rules": [{"pattern": "PROJECT_CONTEXT.md", "ownership": "once", "audit": "keys",
+                   "required_keys": ["Gate"]}],
+    }), encoding="utf-8")
+    tpl.write_text("- **Gate**: old\n", encoding="utf-8", newline="")
+    git("init", "-q")
+    git("add", "-A")
+    git("commit", "-q", "-m", "init")
+    held = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), check=True,
+                          capture_output=True, text=True).stdout.strip()
+    tpl.write_text("- **Gate**: new\n", encoding="utf-8", newline="")
+    git("commit", "-q", "-a", "-m", "gate line changes")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "PROJECT_CONTEXT.md").write_text("- **Gate**: old\n", encoding="utf-8", newline="")
+    manifest = {
+        "manifest_version": 3, "template_version": "v3.1.0", "template_commit": held,
+        "variant": "general", "templateRepo": str(repo), "placeholders": {},
+        "requires_server": ">=0.3.2",
+        "files": {"PROJECT_CONTEXT.md": {"ownership": "once"}},
+    }
+    res = v3.compute_status_v3(proj, manifest, v3.load_ownership(str(repo)))
+    audit = res["files"]["PROJECT_CONTEXT.md"]["key_audit"]
+    return (audit["line_offers"] == [{"old": "- **Gate**: old", "new": "- **Gate**: new"}]
+            and audit["line_offers_base"] == held
+            and "line_offers" in v3.CAPABILITIES)
+
+
 WITNESSES = {
     "region_splice": _witness_region_splice,
     "region_orphaned": _witness_region_orphaned,
@@ -356,6 +398,7 @@ WITNESSES = {
     "template_verify": _witness_template_verify,
     "deleted_acknowledged": _witness_deleted_acknowledged,
     "registered_tools": _witness_registered_tools,
+    "line_offers": _witness_line_offers,
 }
 
 
