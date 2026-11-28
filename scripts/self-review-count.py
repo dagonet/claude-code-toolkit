@@ -377,7 +377,7 @@ def scan(rows, since, until, refusals=(), step_ups=False):
     """
     out = {'first_day': None, 'first_model': None, 'versions': {}, 'usage': {}, 'calls': [],
            'commands': [], 'blocks': [], 'corrections': [], 'step_ups': [], 'backlog': [], 'followups': 0}
-    asked = False  # the latest assistant text, in or out of the window, ends in a question mark
+    asked = False  # the latest assistant text, in or out of the window, ends in a question mark and no typed row has followed
     spawned = {}  # tool_use id -> subagent_type of each Agent call seen so far, in or out of the window
     for i, row in enumerate(rows):
         msg = row.get('message')
@@ -426,6 +426,7 @@ def scan(rows, since, until, refusals=(), step_ups=False):
             if command:
                 out['commands'].append(command)
             text = None if row.get('isMeta') or asked else correction_text(typed)
+            asked = asked and not typed  # only the row that directly answers the question is exempt
             if text:
                 out['corrections'].append((row['timestamp'] if isinstance(row.get('timestamp'), str) else '', text))
         attached = row.get('attachment') if row.get('type') == 'attachment' else None
@@ -1048,6 +1049,36 @@ def self_test():
     real_skills = toolkit_names(os.path.dirname(HERE))[0]
     if 'cct-jev:jev' not in real_skills or 'jev' in real_skills:
         bad.append('/plugin skills: the repo itself lists %s' % real_skills)
+    # B-7: a typed row ends the exemption of an unanswered question; only the row that directly answers it is exempt.
+    def turn(kind, text, minute):
+        return {'type': kind, 'timestamp': '2026-11-10T10:%02d:00Z' % minute, 'message': {'content': text}}
+
+    def tool_row(minute):
+        return {'type': 'assistant', 'timestamp': '2026-11-10T10:%02d:00Z' % minute,
+                'message': {'content': [{'type': 'tool_use', 'id': 't%d' % minute, 'name': 'Bash', 'input': {}}]}}
+    for rows, want, what in (
+            ([turn('assistant', 'Shall I edit a.py?', 0), turn('user', 'yes', 1), tool_row(2), tool_row(3),
+              turn('user', 'no, wrong file', 4)], ['no, wrong file'], 'a correction after an answered question'),
+            ([turn('assistant', 'Shall I edit a.py?', 0), turn('user', 'no', 1)], [], 'the answer to a question')):
+        got = [text for _, text in scan(rows, '2026-11-01', '2026-11-30')['corrections']]
+        if got != want:
+            bad.append('/scan corrections (%s): want %s, got %s' % (what, want, got))
+    # pins of today's behaviour, one input on each side of the boundary
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, 'hooks'))
+        with open(os.path.join(tmp, 'hooks', 'x.sh'), 'w', encoding='utf-8') as fh:
+            fh.write('echo "BLOCKED: abcdefghijk"\necho "BLOCKED: abcdefghijkl"\n')
+        prefixes = [p for p, _ in refusal_table(tmp, set())]
+    if 'abcdefghijkl' not in prefixes or 'abcdefghijk' in prefixes:
+        bad.append('/refusal_table MIN_PREFIX: want the 12-character prefix only, got %s' % prefixes)
+    for text, want in (('BLOCKED: no way', 'no way'), ('echo "x" BLOCKED: no way', 'no way'), ('blocked no way', None)):
+        hit = BLOCKED_TEXT_RE.search(text)
+        if (hit.group(1) if hit else None) != want:
+            bad.append('/BLOCKED_TEXT_RE(%r): want %r' % (text, want))
+    for typed, want in (('<command-name>/cct:commit</command-name>', 'commit'),
+                        ('<command-name>/cct:ghost</command-name>', None)):
+        if toolkit_name(command_name(typed), fixture_skills) != want:
+            bad.append('/command_name %s: want %r' % (typed, want))
     with open(os.path.join(FIXTURES, 'projects', '-home-u-git-alpha', 'main-3.jsonl'), encoding='utf-8') as fh:
         raw = fh.read()
     for needle in ('corp.example', 'secretproject', 'acme', 'internal'):  # control: the rows the two probes are about are in the input,
