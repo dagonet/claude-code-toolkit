@@ -1715,6 +1715,89 @@ def test_adopted_line_that_changes_again_is_offered_beside_an_older_skip(tmp_pat
     assert _read_manifest(proj)["pending_once_lines"] == [{"file": "PROJECT_CONTEXT.md", "from_commit": b}]
 
 
+# A hand-damaged manifest: the value is no list, or an entry is not
+# {"file": str, "from_commit": str}. Either counts as absent.
+_DAMAGED_PENDING = [
+    5,
+    [5, {"file": "PROJECT_CONTEXT.md", "from_commit": 7}, {"file": ["x"], "from_commit": "a" * 40}],
+]
+
+
+def _damage(proj, key, value):
+    m = _read_manifest(proj)
+    m[key] = value
+    _write_manifest(proj, m)
+
+
+@pytest.mark.parametrize("damaged", _DAMAGED_PENDING)
+def test_damaged_pending_once_lines_counts_as_absent(tmp_path, damaged):
+    repo, proj, commit = _good_fixture(tmp_path)
+    _damage(proj, "pending_once_lines", damaged)
+    status = v3.compute_status_v3(proj, _read_manifest(proj), v3.load_ownership(str(repo)))
+    assert "error" not in status
+    assert verify.run(str(proj), str(repo), "post_commit")["lines"]
+    res = _finalize(proj)
+    assert res["pending_once_lines"] == []
+    assert "pending_once_lines" not in _read_manifest(proj)
+
+
+def test_damaged_pending_once_lines_with_an_acknowledged_deleted_finalize(tmp_path):
+    repo, proj = _acknowledged_fixture(tmp_path)
+    _damage(proj, "pending_once_lines", 5)
+    res = json.loads(asyncio.run(ts.template_finalize_sync(
+        str(proj), acknowledged_deleted=json.dumps(["hooks/git-pre-push.sh"]))))
+    assert "error" not in res
+    assert res["pending_once_lines"] == []
+    assert "pending_once_lines" not in _read_manifest(proj)
+
+
+@pytest.mark.parametrize("damaged", _DAMAGED_PENDING)
+def test_damaged_pending_once_notes_counts_as_absent(tmp_path, damaged):
+    repo, proj, commit = _good_fixture(tmp_path)
+    _damage(proj, "pending_once_notes", damaged)
+    assert verify.run(str(proj), str(repo), "post_commit")["lines"]
+    res = _finalize(proj)
+    assert res["pending_once_notes"] == []
+    assert "pending_once_notes" not in _read_manifest(proj)
+
+
+@pytest.mark.parametrize("key", ["pending_once_lines", "pending_once_notes"])
+def test_finalize_drops_a_damaged_pending_value_when_status_fails(tmp_path, monkeypatch, key):
+    repo, proj, commit = _good_fixture(tmp_path)
+    _damage(proj, key, 5)
+    monkeypatch.setattr(v3, "compute_status_v3", lambda *a, **k: {"error": "boom"})
+    res = _finalize(proj)
+    assert res[key] == []
+    assert key not in _read_manifest(proj)
+
+
+def test_skipped_line_survives_a_lost_manifest_base(tmp_path):
+    repo, proj, old_commit, new_commit = _line_changed_fixture(tmp_path)
+    _finalize(proj)                                   # the skip
+    m = _read_manifest(proj)
+    m["template_commit"] = "1" * 40
+    del m["template_version"]
+    _write_manifest(proj, m)
+    audit = _key_audit(repo, proj)
+    assert audit["base"] == "unavailable"             # the manifest's own base is lost
+    assert audit["line_offers"] == [{"old": OLD_GATE, "new": "- **Gate**: bash scripts/gate2.sh"}]
+    assert audit["line_offer_bases"] == [old_commit]
+    want = [{"file": "PROJECT_CONTEXT.md", "from_commit": old_commit}]
+    res = _finalize(proj)
+    assert res["pending_once_lines"] == want
+    assert _read_manifest(proj)["pending_once_lines"] == want
+
+
+def test_no_line_offer_fields_when_no_base_resolves(tmp_path):
+    repo, proj, old_commit, new_commit = _line_changed_fixture(tmp_path)
+    m = _read_manifest(proj)
+    m["template_commit"] = "1" * 40
+    del m["template_version"]
+    _write_manifest(proj, m)
+    audit = _key_audit(repo, proj)
+    assert "line_offers" not in audit and "line_offer_bases" not in audit
+
+
 # --- v4.5.2: retired_rule_names (INFO) ---------------------------------------
 
 def test_retired_rule_names_reported_in_once_class_file(v4_consumer):

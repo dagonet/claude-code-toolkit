@@ -1858,11 +1858,12 @@ async def template_finalize_sync(
         plus earlier notes still open (a commented `**Key**:` example they
         introduced is not yet held by the consumer); stored in the manifest
         and reported by template_verify's once_notes_changed line.
-        `pending_once_lines` = [{file, from_commit}] -- once-class files with
-        a template line offer still open after the skill applied the adopted
-        ones (key_audit.line_offers, B-18); the skipped lines, offered again
-        at the next sync from `from_commit`. Stored in the manifest; always
-        present in the response.
+        `pending_once_lines` = [{file, from_commit}] -- one {file, from_commit}
+        per ref in that file's `key_audit.line_offer_bases`; a file can appear
+        more than once. The offers still open after the skill applied the
+        adopted ones (key_audit.line_offers, B-18) are the skipped lines,
+        offered again at the next sync from each `from_commit`. Stored in the
+        manifest; always present in the response.
         `files_created` counts applied entries whose action is created_from_*
         (a new file written from the template or provided content);
         `files_updated` counts the other applied entries; `files_added` counts

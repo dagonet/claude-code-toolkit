@@ -449,8 +449,25 @@ def test_line_pairs_match_key_lines_by_name_in_a_multi_line_hunk():
     assert sorted(v3.line_pairs(base, now)) == [("- **A**: 1", "- **A**: 10"), ("- **B**: 2", "- **B**: 20")]
 
 
-def test_line_pairs_one_to_one_hunk_pairs_any_lines():
+def test_line_pairs_one_to_one_hunk_pairs_two_prose_lines():
     assert v3.line_pairs("x\nold note\ny\n", "x\nnew note\ny\n") == [("old note", "new note")]
+
+
+def test_line_pairs_one_to_one_hunk_never_pairs_a_key_line_by_position():
+    assert v3.line_pairs("See CLAUDE.local.md for Ollama.\n", "- **Test timeout**: 540\n") == []
+    assert v3.line_pairs("- **Test timeout**: 540\n", "See CLAUDE.local.md for Ollama.\n") == []
+    assert v3.line_pairs("- **A**: 1\n", "- **B**: 1\n") == []
+
+
+def test_line_offers_split_the_template_on_newlines_only():
+    # A form feed is no line end: the project's `Y` line is not the template's `X\fY` line.
+    assert v3.line_offers("X\fY\n", "X\fZ\n", "Y\nother\n") == []
+    assert v3.line_offers("X\fY\n", "X\fZ\n", "X\fY\nother\n") == [{"old": "X\fY", "new": "X\fZ"}]
+
+
+def test_line_offers_need_the_old_text_nowhere_else_in_the_project():
+    base, now = "- **K**: old\n", "- **K**: new\n"
+    assert v3.line_offers(base, now, "- **K**: old\n<!-- e.g. - **K**: old -->\n") == []
 
 
 def test_line_pairs_nothing_for_additions_deletions_and_unequal_non_key_hunks():

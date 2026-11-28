@@ -824,12 +824,19 @@ def find_orphans(project_root: pathlib.Path, rules: OwnershipRules,
     return sorted(found)
 
 
+def _lines_keepends(text: str) -> list[str]:
+    """Lines split on `\\n` only, endings kept -- what line_offers takes a
+    project line to be. `splitlines()` also splits on form feed, U+2028 and
+    others, so the two sides would disagree on what a line is."""
+    return [l for l in re.split(r"(?<=\n)", text) if l]
+
+
 def _diff_hunks(tpl_at_sync: str, tpl_now: str, n: int) -> list[list[str]]:
     """Unified-diff hunks of the template-side diff, each a list whose first
     item is the `@@` header, with `n` context lines."""
     from difflib import unified_diff
     lines = list(unified_diff(
-        tpl_at_sync.splitlines(keepends=True), tpl_now.splitlines(keepends=True),
+        _lines_keepends(tpl_at_sync), _lines_keepends(tpl_now),
         fromfile="template@sync", tofile="template@now", n=n,
     ))
     # The `---`/`+++` file headers come before the first `@@`, where no hunk
@@ -847,18 +854,18 @@ def line_pairs(tpl_at_base: str, tpl_now: str) -> list[tuple[str, str]]:
     """(old, new) template lines, without line endings, in file order.
 
     Strict pairing (B-18), on a no-context diff: a hunk of exactly one removed
-    and one added line is a pair whatever the lines are; otherwise a removed
+    and one added line, neither of them a **Key**: line, is a pair; a removed
     and an added **Key**: line with the same key name, each the only one of
-    that name in the hunk. Nothing else pairs -- no guessing."""
+    that name in the hunk, are a pair. Nothing else pairs -- a key line never
+    pairs by position, only by its name."""
     pairs: list[tuple[str, str]] = []
     for h in _diff_hunks(tpl_at_base, tpl_now, 0):
         removed = [l[1:].rstrip("\r\n") for l in h[1:] if l.startswith("-")]
         added = [l[1:].rstrip("\r\n") for l in h[1:] if l.startswith("+")]
-        if len(removed) == 1 and len(added) == 1:
+        old_by_key, new_by_key = _lines_by_key(removed), _lines_by_key(added)
+        if len(removed) == 1 and len(added) == 1 and not old_by_key and not new_by_key:
             pairs.append((removed[0], added[0]))
             continue
-
-        old_by_key, new_by_key = _lines_by_key(removed), _lines_by_key(added)
         for key, olds in old_by_key.items():
             news = new_by_key.get(key, [])
             if len(olds) == 1 and len(news) == 1:
@@ -879,13 +886,15 @@ def line_offers(tpl_at_base: str, tpl_now: str, proj_text: str) -> list[dict]:
     """The pairs the project can adopt: old is not blank, old != new, no
     `{{...}}` left in the new line, and the old line is exactly one whole line
     of the project's text (compared literally; a trailing CR is ignored, the
-    final newline is no empty line)."""
+    final newline is no empty line) whose text occurs nowhere else in it, not
+    even inside a longer line -- the skill's exact replacement must have one
+    place to land."""
     held = [l.removesuffix("\r") for l in proj_text.removesuffix("\n").split("\n")]
     return [
         {"old": old, "new": new}
         for old, new in line_pairs(tpl_at_base, tpl_now)
         if old.strip() and old != new and not PLACEHOLDER_RE.search(new)
-        and held.count(old) == 1
+        and held.count(old) == 1 and proj_text.count(old) == 1
     ]
 
 
@@ -1163,24 +1172,40 @@ def resolve_base(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     return None, "unavailable", "migration_base_unavailable"
 
 
+def pending_entries(manifest: dict, key: str) -> list[dict]:
+    """The entries of a manifest's `pending_once_*` list that are a dict with
+    a string `file`. A value that is not a list, or an entry of another
+    shape, counts as absent: a hand-damaged manifest must not fail the
+    status, the verify or the finalize."""
+    value = manifest.get(key)
+    if not isinstance(value, list):
+        return []
+    return [p for p in value if isinstance(p, dict) and isinstance(p.get("file"), str) and p["file"]]
+
+
 def _line_offers_all_bases(pp: pathlib.Path, manifest: dict, rules: OwnershipRules, tpl_rel: str,
-                           proj_rel: str, base: str, base_label: str, tpl_now: str,
-                           proj_text: str) -> tuple[list[dict], list[str]]:
+                           proj_rel: str, base: str | None, base_label: str, tpl_now: str,
+                           proj_text: str) -> tuple[list[dict], list[str]] | None:
     """(offers, refs that yielded one): measured from every commit a skipped
     offer was made from (manifest pending_once_lines) that still resolves, in
-    stored order, then from the audit's base. An offer whose old line an
-    earlier base already offered is dropped. A skipped line so returns with
-    the newest text, and a line adopted earlier and changed again is offered
-    from the newer base beside it (spec "Bases")."""
+    stored order, then from the audit's base if that resolved (`base` is not
+    None). An offer whose old line an earlier base already offered is
+    dropped. A skipped line so returns with the newest text, and a line
+    adopted earlier and changed again is offered from the newer base beside
+    it; a skipped line is not lost with the manifest's own base (spec
+    "Bases"). None when no base at all resolved."""
     bases: list[tuple[str, str]] = []
-    for p in manifest.get("pending_once_lines") or []:
-        if isinstance(p, dict) and p.get("file") == proj_rel and p.get("from_commit"):
+    for p in pending_entries(manifest, "pending_once_lines"):
+        if p["file"] == proj_rel and isinstance(p.get("from_commit"), str) and p["from_commit"]:
             text, _, _ = resolve_base(pp, {**manifest, "template_commit": p["from_commit"],
                                            "lastSynced": None, "template_version": None},
                                       rules, tpl_rel)
             if text is not None:
                 bases.append((p["from_commit"], text))
-    bases.append((base_label, base))
+    if base is not None:
+        bases.append((base_label, base))
+    if not bases:
+        return None
 
     offers: list[dict] = []
     refs: list[str] = []
@@ -1278,9 +1303,10 @@ def compute_status_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules) -
                     audit["base"] = base_label
                     if base is not None:
                         audit["template_notes_changed"] = notes_hunks(base, tpl_replaced)
-                        audit["line_offers"], audit["line_offer_bases"] = _line_offers_all_bases(
-                            pp, manifest, rules, tpl_rel, proj_rel, base, base_label,
-                            tpl_replaced, proj_content)
+                    found = _line_offers_all_bases(pp, manifest, rules, tpl_rel, proj_rel, base,
+                                                   base_label, tpl_replaced, proj_content)
+                    if found is not None:
+                        audit["line_offers"], audit["line_offer_bases"] = found
                     info["key_audit"] = audit
             elif tpl_replaced is None:
                 status = "TEMPLATE_DELETED"
@@ -1765,8 +1791,8 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
         # introduced or when the template stops offering them. A manifest
         # lacking the field contributes nothing.
         have = {p["file"] for p in pending}
-        for prev in manifest.get("pending_once_notes") or []:
-            if not isinstance(prev, dict) or not prev.get("file") or prev["file"] in have:
+        for prev in pending_entries(manifest, "pending_once_notes"):
+            if prev["file"] in have:
                 continue
             info = st.get("files", {}).get(prev["file"]) or {}
             if info.get("ownership") == "once" and _pending_note_open(pp, manifest, rules, prev, info):
@@ -1794,6 +1820,11 @@ def finalize_v3(pp: pathlib.Path, manifest: dict, rules: OwnershipRules,
     out["manifest_version"] = manifest.get("manifest_version", MANIFEST_VERSION_V3)
     out["template_version"] = version
     out["template_commit"] = commit
+    # A stored value that is not a list is never written back, also when the
+    # status failed and the lists below stay as they were.
+    for key in ("pending_once_notes", "pending_once_lines"):
+        if not isinstance(out.get(key), list):
+            out.pop(key, None)
     if pending is not None:
         if pending:
             out["pending_once_notes"] = pending

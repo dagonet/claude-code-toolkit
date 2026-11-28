@@ -811,8 +811,7 @@ def run(project_path: str, template_repo: str = "", mode: str = "post_commit") -
     # v4.3.1 S1: plus the files finalize recorded in `pending_once_notes` --
     # after finalize the base has moved, so the live comparison is empty and
     # this list is the only remaining trace. Still ONE line (ruling R2).
-    pending = [p for p in (manifest.get("pending_once_notes") or [])
-               if isinstance(p, dict) and p.get("file")]
+    pending = v3.pending_entries(manifest, "pending_once_notes")
     pending_txt = "; ".join(
         f"new optional template notes in {p['file']} since {str(p.get('from_commit') or '')[:12]}: "
         "review and adopt by hand"
