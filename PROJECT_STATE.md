@@ -8,7 +8,9 @@ v7.0.1 is released (PR #226) and live on agent-host-1 and the PC (drift 0). v7.1
 
 ### Untriaged
 
-_none_
+- B-21 sync-template SKILL.md: a placeholder-sweep hit in a once-class file the project already held gets "Fill it or delete the line" and "NEVER edit a once-class file the project already holds" at the same time (seen in the v7.1.0 review; older than v7.1.0)
+- B-22 sync-template SKILL.md: the "Already in sync" shortcut finalizes without step 6b, although the Rules forbid a finalize without it (seen in the v7.1.0 review; older than v7.1.0)
+- B-23 Retro counter: `BLOCKED_TEXT_RE` has no word boundary, so `UNBLOCKED: x` matches (seen while building B-7)
 
 ### Ranked
 
